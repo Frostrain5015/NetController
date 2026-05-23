@@ -1,0 +1,27 @@
+listen: ":9527"
+
+projects:
+  - name: "示例项目-API网关"
+    processName: "gateway"
+    port: 8080
+  - name: "示例项目-用户服务"
+    processName: "user-svc"
+    port: 8081
+
+proxy:
+  processName: "nginx"
+  port: 443
+
+overseasNodes:
+  - name: "AWS 东京"
+    host: "54.0.0.0:443"
+    lat: 35.69
+    lng: 139.69
+  - name: "GCP 新加坡"
+    host: "35.0.0.0:443"
+    lat: 1.35
+    lng: 103.82
+  - name: "AWS 法兰克福"
+    host: "18.0.0.0:443"
+    lat: 50.11
+    lng: 8.68
