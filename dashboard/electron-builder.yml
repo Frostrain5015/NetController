@@ -1,0 +1,22 @@
+appId: com.netcontroller.dashboard
+productName: NetController
+directories:
+  output: release
+
+files:
+  - dist
+  - dist-electron
+  - node_modules
+
+win:
+  target:
+    - target: portable
+      arch: [x64]
+
+portable:
+  artifactName: NetController.exe
+
+asar: true
+asarUnpack:
+  - node_modules/ssh2/**
+  - node_modules/cpu-features/**

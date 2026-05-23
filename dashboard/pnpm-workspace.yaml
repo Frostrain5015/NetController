@@ -1,0 +1,8 @@
+allowBuilds:
+  bufferutil: true
+  core-js: true
+  cpu-features: true
+  electron: true
+  esbuild: true
+  ssh2: true
+  utf-8-validate: true

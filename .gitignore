@@ -1,0 +1,27 @@
+# Claude 会话数据（含命令历史，可能包含敏感信息）
+.claude/
+
+# 敏感信息
+*.pem
+*.key
+*.env
+.env.*
+
+# Python 桥接层（开发期间临时使用，不再维护）
+bridge/
+
+# Go Agent（未使用，保留源码仅供参考）
+agent/
+
+# Node
+node_modules/
+dashboard/dist/
+dashboard/dist-electron/
+dashboard/release/
+dashboard/pnpm-lock.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
