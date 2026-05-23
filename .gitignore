@@ -7,8 +7,8 @@
 *.env
 .env.*
 
-# Python 桥接层（开发期间临时使用，不再维护）
-bridge/
+# Python 桥接层敏感文件
+bridge/*password*
 
 # Go Agent 编译产物
 agent/netcontroller-agent
