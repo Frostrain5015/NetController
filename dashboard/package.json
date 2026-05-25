@@ -12,6 +12,7 @@
     "@ant-design/icons-vue": "^7.0.0",
     "ant-design-vue": "^4.2.0",
     "echarts": "^5.5.0",
+    "flag-icons": "^7.5.0",
     "vue": "^3.4.0"
   },
   "devDependencies": {
