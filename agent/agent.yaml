@@ -1,27 +1,33 @@
 listen: ":9527"
 
 projects:
-  - name: "示例项目-API网关"
-    processName: "gateway"
-    port: 8080
-  - name: "示例项目-用户服务"
-    processName: "user-svc"
-    port: 8081
+  - name: "PP Typeset"
+    processName: "pp-typeset"
+    port: 4443
+  - name: "PP Typeset Worker"
+    processName: "pp-typeset-worker"
+    port: 0
+  - name: "MongoDB"
+    processName: "mongod"
+    port: 27017
+  - name: "Investory"
+    processName: "java"
+    port: 8443
+  - name: "MySQL"
+    processName: "mysqld"
+    port: 3306
+  - name: "Blades of Hex"
+    processName: "blades-of-hex"
+    port: 3000
+  - name: "Webhook"
+    processName: "deploy-webhook"
+    port: 9000
+  - name: "Nginx"
+    processName: "nginx"
+    port: 80
 
 proxy:
-  processName: "nginx"
-  port: 443
-
-overseasNodes:
-  - name: "AWS 东京"
-    host: "54.0.0.0:443"
-    lat: 35.69
-    lng: 139.69
-  - name: "GCP 新加坡"
-    host: "35.0.0.0:443"
-    lat: 1.35
-    lng: 103.82
-  - name: "AWS 法兰克福"
-    host: "18.0.0.0:443"
-    lat: 50.11
-    lng: 8.68
+  processName: "mihomo"
+  port: 7897
+  clashApiPort: 9090
+  testUrl: "https://www.baidu.com"

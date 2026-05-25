@@ -12,11 +12,10 @@ win:
   target:
     - target: portable
       arch: [x64]
+  sign: null
+  signAndEditExecutable: false
 
 portable:
   artifactName: NetController.exe
 
 asar: true
-asarUnpack:
-  - node_modules/ssh2/**
-  - node_modules/cpu-features/**

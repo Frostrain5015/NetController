@@ -13,22 +13,16 @@ type Project struct {
 }
 
 type Proxy struct {
-	ProcessName string `yaml:"processName"`
-	Port        int    `yaml:"port"`
-}
-
-type OverseasNode struct {
-	Name string  `yaml:"name"`
-	Host string  `yaml:"host"`
-	Lat  float64 `yaml:"lat"`
-	Lng  float64 `yaml:"lng"`
+	ProcessName  string `yaml:"processName"`
+	Port         int    `yaml:"port"`
+	ClashApiPort int    `yaml:"clashApiPort"`
+	TestURL      string `yaml:"testUrl"`
 }
 
 type Config struct {
-	Listen        string         `yaml:"listen"`
-	Projects      []Project      `yaml:"projects"`
-	Proxy         Proxy          `yaml:"proxy"`
-	OverseasNodes []OverseasNode `yaml:"overseasNodes"`
+	Listen   string    `yaml:"listen"`
+	Projects []Project `yaml:"projects"`
+	Proxy    Proxy     `yaml:"proxy"`
 }
 
 func Load(path string) (*Config, error) {

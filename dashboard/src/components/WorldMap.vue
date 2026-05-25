@@ -3,7 +3,7 @@ import { ref, watch, computed, onMounted, onUnmounted, shallowRef } from 'vue'
 import * as echarts from 'echarts'
 
 const props = defineProps<{
-  overseasNodes: OverseasNode[]
+  proxyNodes: ProxyNode[]
   connected: string
   myLocation: { lat: number; lng: number; country: string; region: string; city: string } | null
   sameCity: boolean
@@ -20,46 +20,69 @@ const connColor = computed(() => {
   return props.connected === 'connected' ? '#52c41a' : '#ff4d4f'
 })
 
+const nodeGroups = computed(() => {
+  const map = new Map<string, { displayName: string; location: [number, number]; country: string; reachable: boolean; minLatency: number; count: number }>()
+  for (const n of props.proxyNodes) {
+    if (!n.location) continue
+    const key = n.country
+    const g = map.get(key)
+    if (g) {
+      if (n.reachable) { g.reachable = true; g.minLatency = Math.min(g.minLatency, n.latencyMs || Infinity) }
+      g.count++
+    } else {
+      map.set(key, {
+        displayName: n.displayName || n.name,
+        location: n.location, country: n.country,
+        reachable: n.reachable,
+        minLatency: n.reachable && n.latencyMs > 0 ? n.latencyMs : Infinity,
+        count: 1,
+      })
+    }
+  }
+  return [...map.values()]
+})
+
 function buildOption(showOverseas: boolean): echarts.EChartsOption {
-  const scatterData = props.overseasNodes.map(n => ({
-    name: n.name, value: [...n.location, n.reachable, n.latencyMs],
-  }))
   const hz = [120.15, 30.28]
-  const showPcLine = !props.sameCity && props.myLocation
+  const groups = nodeGroups.value
+  const showPcLine = !!props.myLocation
   const myCountry = props.myLocation?.country || ''
+
+  const scatterData = groups.map(g => ({
+    name: g.displayName,
+    value: [...g.location, g.reachable ? 1 : 0, g.minLatency < Infinity ? g.minLatency : 9999, g.count],
+  }))
 
   const regions: any[] = [
     { name: 'China', itemStyle: { areaColor: '#1a3050', borderColor: '#1677ff', borderWidth: 1 } },
   ]
-  // 本机所在国家也高亮（如果不同于中国）
   if (myCountry && myCountry !== 'China') {
     regions.push({ name: myCountry, itemStyle: { areaColor: '#162d40', borderColor: '#13c2c2', borderWidth: 1 } })
   }
 
   const series: any[] = [
-    // 杭州
     {
-      type: 'effectScatter', coordinateSystem: 'geo',
+      id: 'hz', type: 'effectScatter', coordinateSystem: 'geo',
       data: [{ name: '杭州', value: [...hz, props.connected !== 'disconnected' ? 1 : 0] }],
       symbolSize: 14,
       rippleEffect: { brushType: 'stroke', scale: 2.5, period: 3 },
-      label: { show: true, formatter: '杭州', position: 'bottom', color: connColor.value, fontSize: 13, fontWeight: 'bold', offset: [0, 8] },
+      label: { show: true, formatter: '杭州', position: 'top', color: connColor.value, fontSize: 13, fontWeight: 'bold', offset: [0, -10] },
       itemStyle: { color: connColor.value, shadowBlur: 10, shadowColor: connColor.value },
     },
-    // 海外节点
     {
-      type: 'effectScatter', coordinateSystem: 'geo',
+      id: 'groups', type: 'effectScatter', coordinateSystem: 'geo',
       data: scatterData,
-      symbolSize: (val: any) => Math.max(4, Math.min(10, (val[3] > 0 ? val[3] : 300) / 30)),
-      label: { formatter: '{b}', position: 'right', show: true, color: '#8899aa', fontSize: 11 },
+      symbolSize: 8,
+      label: { formatter: '{b}', position: 'right', show: true, color: '#8899aa', fontSize: 12 },
       itemStyle: { color: (p: any) => (p.value[2] ? '#52c41a' : '#ff4d4f'), shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.5)' },
     },
   ]
 
   if (props.myLocation) {
+    const offset = props.sameCity ? 0.3 : 0
     series.push({
-      type: 'effectScatter', coordinateSystem: 'geo',
-      data: [{ name: '本机', value: [props.myLocation.lng, props.myLocation.lat] }],
+      id: 'me', type: 'effectScatter', coordinateSystem: 'geo',
+      data: [{ name: '本机', value: [props.myLocation.lng + offset, props.myLocation.lat - offset] }],
       symbolSize: 10, symbol: 'pin',
       rippleEffect: { brushType: 'stroke', scale: 2, period: 2.5 },
       label: { show: true, formatter: '本机', position: 'top', color: '#13c2c2', fontSize: 11, offset: [0, -6] },
@@ -70,8 +93,7 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
 
   if (showPcLine) {
     series.push({
-      type: 'lines', coordinateSystem: 'geo', polyline: false,
-      animationDelay: 0,
+      id: 'pc-line', type: 'lines', coordinateSystem: 'geo', polyline: false,
       data: [{ coords: [[props.myLocation!.lng, props.myLocation!.lat], hz], lineStyle: { color: '#13c2c2', width: 1.5, type: 'dashed' } }],
       effect: { show: true, period: 4, trailLength: 0.2, symbol: 'circle', symbolSize: 4, color: '#13c2c2' },
     })
@@ -79,10 +101,11 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
 
   if (showOverseas) {
     series.push({
-      type: 'lines', coordinateSystem: 'geo', polyline: false,
+      id: 'overseas-lines', type: 'lines', coordinateSystem: 'geo', polyline: false,
       animationDelay: 800,
-      data: props.overseasNodes.filter(n => n.reachable).map(n => ({
-        coords: [hz, n.location], lineStyle: { color: '#52c41a33', width: 1 },
+      data: groups.filter(g => g.reachable).map(g => ({
+        name: g.country,
+        coords: [hz, g.location], lineStyle: { color: '#52c41a33', width: 1 },
       })),
       effect: { show: true, period: 6, trailLength: 0.3, symbol: 'arrow', symbolSize: 6, color: '#1677ff' },
     })
@@ -97,13 +120,15 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
           if (p.name === '杭州') return `<b>杭州</b><br/>${props.connected === 'connecting' ? '正在连接...' : props.connected === 'connected' ? '服务器已连接' : '服务器未连接'}`
           if (p.name === '本机') return `<b>本机</b><br/>${props.myLocation?.city || ''} ${props.myLocation?.country || ''}`
           const [lng, lat, reachable, ms] = p.value ?? []
-          return `<b>${p.name}</b><br/>${reachable ? `可达 ${ms}ms` : '不可达'}`
+          const g = groups.find(g => g.displayName === p.name)
+          const ns = g ? ` (${g.count} 个节点)` : ''
+          return `<b>${p.name}</b>${ns}<br/>${reachable ? `可达 ${ms < 9999 ? ms + 'ms' : ''}` : '不可达'}`
         }
         return `${p.name}`
       },
     },
     geo: {
-      map: 'world', roam: true, zoom: 1.2, center: [20, 25],
+      map: 'world', roam: true, zoom: 1.2, center: [0, 25],
       itemStyle: { areaColor: '#141f2b', borderColor: '#2a3a4a', borderWidth: 0.5 },
       emphasis: { itemStyle: { areaColor: '#1a3a5c' }, label: { color: '#fff' } },
       regions,
@@ -117,17 +142,29 @@ function render(showOverseas: boolean) {
   chart.value.setOption(buildOption(showOverseas), true)
 }
 
+// 首次连接：延迟飞线动画
 watch(() => props.connected, (c, prev) => {
   if (animTimer) { clearTimeout(animTimer); animTimer = null }
   if (c === 'connected' && prev !== 'connected') {
     showOverseasLines.value = false
     render(false)
     animTimer = setTimeout(() => { showOverseasLines.value = true; render(true) }, 1500)
-  } else {
-    showOverseasLines.value = true
-    render(true)
+  } else if (c !== 'connected') {
+    showOverseasLines.value = false
+    render(false)
   }
 })
+
+// 代理节点变化防抖渲染
+let renderTimer: ReturnType<typeof setTimeout> | null = null
+watch(() => props.proxyNodes, () => {
+  if (!renderTimer) {
+    renderTimer = setTimeout(() => {
+      renderTimer = null
+      if (showOverseasLines.value) render(true)
+    }, 300)
+  }
+}, { deep: true })
 
 onMounted(async () => {
   if (!container.value) return
@@ -138,7 +175,7 @@ onMounted(async () => {
   resizeObs.observe(container.value)
 })
 
-onUnmounted(() => { if (animTimer) clearTimeout(animTimer); resizeObs?.disconnect(); chart.value?.dispose() })
+onUnmounted(() => { if (animTimer) clearTimeout(animTimer); if (renderTimer) clearTimeout(renderTimer); resizeObs?.disconnect(); chart.value?.dispose() })
 </script>
 
 <template>

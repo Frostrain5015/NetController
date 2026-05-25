@@ -1,12 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ElectronAPI {
-  onAgentUpdate: (callback: (data: Snapshot) => void) => void
-  onAgentConnection: (callback: (connected: boolean) => void) => void
-  getSettings: () => Promise<{ host: string; port: number; username: string; password: string }>
-  saveSettings: (data: { host: string; port: number; username: string; password: string }) => Promise<boolean>
-  getConfig: () => Promise<any>
-  saveConfig: (config: any) => Promise<boolean>
+  getConfig: () => Promise<{ wsUrl: string }>
+  saveConfig: (config: { wsUrl: string }) => Promise<boolean>
   minimize: () => void
   maximize: () => void
   close: () => void
@@ -20,9 +16,14 @@ interface ProjectStatus {
 }
 interface ProxyStatus {
   name?: string; alive: boolean; port: number; portOpen: boolean; activeConnections: number
+  apiAccessible: boolean
+  trafficRemainingGB: number | null
+  planExpiry: string | null
 }
-interface OverseasNode {
-  name: string; location: [number, number]; reachable: boolean; latencyMs: number; country: string
+interface ProxyNode {
+  name: string; displayName: string; group: string; type: string
+  latencyMs: number; reachable: boolean
+  location: [number, number] | null; country: string
 }
 interface ServerMetrics {
   cpuPercent: number; memPercent: number; diskPercent: number
@@ -30,5 +31,5 @@ interface ServerMetrics {
 }
 interface Snapshot {
   timestamp: number; serverMetrics: ServerMetrics
-  projects: ProjectStatus[]; proxy: ProxyStatus; overseasNodes: OverseasNode[]
+  projects: ProjectStatus[]; proxy: ProxyStatus; proxyNodes: ProxyNode[]
 }

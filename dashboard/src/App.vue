@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useAgentData } from './composables/useWebSocket'
 import { useGeoLocation } from './composables/useGeoLocation'
 import ServerMetrics from './components/ServerMetrics.vue'
@@ -74,14 +74,14 @@ function winClose() { window.electronAPI?.close() }
           <div class="map-container">
             <ChinaMap
               v-if="mapTab === 'china'"
-              :overseas-nodes="snapshot?.overseasNodes ?? []"
+              :proxy-nodes="snapshot?.proxyNodes ?? []"
               :connected="connected"
               :my-location="myLocation"
               :same-city="sameCity"
             />
             <WorldMap
               v-else
-              :overseas-nodes="snapshot?.overseasNodes ?? []"
+              :proxy-nodes="snapshot?.proxyNodes ?? []"
               :connected="connected"
               :my-location="myLocation"
               :same-city="sameCity"
