@@ -1,6 +1,6 @@
 {
   "name": "netcontroller-dashboard",
-  "version": "0.5.3",
+  "version": "0.5.5",
   "description": "阿里云服务器监控仪表盘",
   "author": "Frostrain",
   "main": "dist-electron/main.js",
