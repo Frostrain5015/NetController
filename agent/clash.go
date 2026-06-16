@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -98,6 +101,7 @@ func geolocateProxyNode(name string) (lat, lng float64, country string, ok bool)
 type clashProxy struct {
 	Type string   `json:"type"`
 	All  []string `json:"all"`
+	Now  string   `json:"now"`
 }
 
 type clashResponse struct {
@@ -108,47 +112,60 @@ type clashDelayResponse struct {
 	Delay int `json:"delay"`
 }
 
+type clashConnectionsResponse struct {
+	Connections []json.RawMessage `json:"connections"`
+}
+
 type proxyNodeInfo struct {
 	Name        string
 	DisplayName string
 	Group       string
+	GroupType   string
 	Type        string
 	Country     string
 	Location    []float64
+	Selected    bool
+}
+
+type subscriptionUsage struct {
+	RemainingGB *float64
+	UsedGB      *float64
+	TotalGB     *float64
+	Expiry      string
 }
 
 // --- Clash API client ---
 
-func fetchClashProxies(apiPort int) ([]proxyNodeInfo, float64, string) {
+func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/proxies", apiPort))
 	if err != nil {
-		return nil, 0, ""
+		return nil, subscriptionUsage{}
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
 	var data clashResponse
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, 0, ""
+		return nil, subscriptionUsage{}
 	}
 
 	seed := make(map[string]*proxyNodeInfo)
-	var trafficGB float64
-	var expiry string
+	textUsage := subscriptionUsage{}
 
 	for key, obj := range data.Proxies {
 		t := strings.ToLower(obj.Type)
 		if groupTypes[t] {
 			for _, name := range obj.All {
-				if _, exists := seed[name]; !exists {
-					seed[name] = &proxyNodeInfo{Name: name, Group: key}
+				if info, exists := seed[name]; !exists {
+					seed[name] = &proxyNodeInfo{Name: name, Group: key, GroupType: t, Selected: obj.Now == name}
+				} else {
+					if preferGroup(info.GroupType, t) {
+						info.Group = key
+						info.GroupType = t
+					}
+					info.Selected = info.Selected || obj.Now == name
 				}
-				if trafficGB == 0 {
-					trafficGB = parseTrafficRemaining(name)
-				}
-				if expiry == "" {
-					expiry = parseExpiry(name)
-				}
+				textUsage.mergeText(name)
 			}
 		}
 		if _, exists := seed[key]; !exists && !groupTypes[t] {
@@ -156,13 +173,7 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, float64, string) {
 		} else if info, exists := seed[key]; exists && info.Type == "" {
 			info.Type = t
 		}
-		// Also try to parse from top-level keys
-		if trafficGB == 0 {
-			trafficGB = parseTrafficRemaining(key)
-		}
-		if expiry == "" {
-			expiry = parseExpiry(key)
-		}
+		textUsage.mergeText(key)
 	}
 
 	var nodes []proxyNodeInfo
@@ -183,7 +194,106 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, float64, string) {
 		}
 		nodes = append(nodes, *info)
 	}
-	return nodes, trafficGB, expiry
+	usage := fetchProviderSubscriptionUsage(apiPort)
+	usage.fillMissing(textUsage)
+	return nodes, usage
+}
+
+func preferGroup(current string, next string) bool {
+	if current == "" {
+		return true
+	}
+	if current != "selector" && next == "selector" {
+		return true
+	}
+	return false
+}
+
+func fetchClashConnectionCount(apiPort int) int {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/connections", apiPort))
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	var data clashConnectionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return 0
+	}
+	return len(data.Connections)
+}
+
+func selectProxyNode(apiPort int, group string, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("empty proxy node name")
+	}
+	var errs []string
+	groups := []string{}
+	if strings.TrimSpace(group) != "" {
+		groups = append(groups, group)
+	}
+	for _, candidate := range findSelectableProxyGroups(apiPort, name) {
+		if candidate != group {
+			groups = append(groups, candidate)
+		}
+	}
+	if len(groups) == 0 {
+		return fmt.Errorf("no selectable mihomo group contains %q", name)
+	}
+	for _, g := range groups {
+		if err := putProxySelection(apiPort, g, name); err == nil {
+			return nil
+		} else {
+			errs = append(errs, fmt.Sprintf("%s: %v", g, err))
+		}
+	}
+	return fmt.Errorf("switch mihomo proxy failed: %s", strings.Join(errs, "; "))
+}
+
+func findSelectableProxyGroups(apiPort int, name string) []string {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/proxies", apiPort))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var data clashResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil
+	}
+	var groups []string
+	for key, obj := range data.Proxies {
+		if strings.ToLower(obj.Type) != "selector" {
+			continue
+		}
+		for _, item := range obj.All {
+			if item == name {
+				groups = append(groups, key)
+				break
+			}
+		}
+	}
+	return groups
+}
+
+func putProxySelection(apiPort int, group string, name string) error {
+	payload, _ := json.Marshal(map[string]string{"name": name})
+	u := fmt.Sprintf("http://127.0.0.1:%d/proxies/%s", apiPort, url.PathEscape(group))
+	req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func probeSingleDelay(apiPort int, name string, testURL string, timeoutSec int) int {
@@ -211,22 +321,169 @@ func probeSingleDelay(apiPort int, name string, testURL string, timeoutSec int) 
 
 // --- Traffic & expiry parsing ---
 
-var trafficRe = regexp.MustCompile(`剩余流量[：:]\s*([\d.]+)\s*GB`)
-var expiryRe = regexp.MustCompile(`套餐到期[：:]\s*(\d{4}-\d{2}-\d{2})`)
+var trafficRe = regexp.MustCompile(`(?i)(?:剩余流量|流量剩余|traffic\s*left|remaining)[：:\s]*([\d.]+)\s*(TB|GB|MB)`)
+var expiryRe = regexp.MustCompile(`(?i)(?:套餐到期|到期时间|expire|expires)[：:\s]*(\d{4}[-/]\d{1,2}[-/]\d{1,2})`)
 
-func parseTrafficRemaining(name string) float64 {
-	m := trafficRe.FindStringSubmatch(name)
-	if len(m) >= 2 {
-		v, _ := strconv.ParseFloat(m[1], 64)
-		return v
+func (u *subscriptionUsage) fillMissing(other subscriptionUsage) {
+	if u.RemainingGB == nil {
+		u.RemainingGB = other.RemainingGB
 	}
-	return 0
+	if u.UsedGB == nil {
+		u.UsedGB = other.UsedGB
+	}
+	if u.TotalGB == nil {
+		u.TotalGB = other.TotalGB
+	}
+	if u.Expiry == "" {
+		u.Expiry = other.Expiry
+	}
+}
+
+func (u *subscriptionUsage) mergeText(text string) {
+	if u.RemainingGB == nil {
+		u.RemainingGB = parseTrafficRemaining(text)
+	}
+	if u.Expiry == "" {
+		u.Expiry = parseExpiry(text)
+	}
+}
+
+func parseTrafficRemaining(name string) *float64 {
+	m := trafficRe.FindStringSubmatch(name)
+	if len(m) >= 3 {
+		v, _ := strconv.ParseFloat(m[1], 64)
+		return floatPtr(toGB(v, m[2]))
+	}
+	return nil
 }
 
 func parseExpiry(name string) string {
 	m := expiryRe.FindStringSubmatch(name)
 	if len(m) >= 2 {
-		return m[1]
+		return strings.ReplaceAll(m[1], "/", "-")
 	}
 	return ""
+}
+
+func fetchProviderSubscriptionUsage(apiPort int) subscriptionUsage {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/providers/proxies", apiPort))
+	if err != nil {
+		return subscriptionUsage{}
+	}
+	defer resp.Body.Close()
+	var root map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&root); err != nil {
+		return subscriptionUsage{}
+	}
+	providers, ok := root["providers"].(map[string]interface{})
+	if !ok {
+		return subscriptionUsage{}
+	}
+	usage := subscriptionUsage{}
+	for _, rawProvider := range providers {
+		provider, ok := rawProvider.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		usage.mergeText(stringValue(provider, "name"))
+		for _, key := range []string{"subscriptionInfo", "subscription-info", "subInfo", "subscription"} {
+			rawInfo, ok := lookupAny(provider, key)
+			if !ok {
+				continue
+			}
+			info, ok := rawInfo.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			usage.mergeSubscriptionInfo(info)
+		}
+	}
+	return usage
+}
+
+func (u *subscriptionUsage) mergeSubscriptionInfo(info map[string]interface{}) {
+	upload, hasUpload := lookupNumber(info, "upload")
+	download, hasDownload := lookupNumber(info, "download")
+	total, hasTotal := lookupNumber(info, "total")
+	expire, hasExpire := lookupNumber(info, "expire")
+
+	if hasUpload || hasDownload {
+		used := bytesToGB(upload + download)
+		u.UsedGB = floatPtr(used)
+	}
+	if hasTotal && total > 0 {
+		totalGB := bytesToGB(total)
+		u.TotalGB = floatPtr(totalGB)
+		if hasUpload || hasDownload {
+			remaining := math.Max(0, totalGB-bytesToGB(upload+download))
+			u.RemainingGB = floatPtr(remaining)
+		}
+	}
+	if hasExpire && expire > 0 {
+		u.Expiry = time.Unix(int64(expire), 0).Format("2006-01-02")
+	}
+}
+
+func lookupAny(m map[string]interface{}, key string) (interface{}, bool) {
+	want := normalizeKey(key)
+	for k, v := range m {
+		if normalizeKey(k) == want {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func lookupNumber(m map[string]interface{}, key string) (float64, bool) {
+	v, ok := lookupAny(m, key)
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func stringValue(m map[string]interface{}, key string) string {
+	v, ok := lookupAny(m, key)
+	if !ok {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func normalizeKey(s string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(s))
+}
+
+func bytesToGB(v float64) float64 {
+	return v / 1024 / 1024 / 1024
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
+}
+
+func toGB(v float64, unit string) float64 {
+	switch strings.ToUpper(unit) {
+	case "TB":
+		return v * 1024
+	case "MB":
+		return v / 1024
+	default:
+		return v
+	}
 }

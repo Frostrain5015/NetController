@@ -10,7 +10,7 @@ import WorldMap from './components/WorldMap.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
 
-const { snapshot, connected } = useAgentData()
+const { snapshot, connected, selectProxyNode } = useAgentData()
 
 // 把连接状态同步给主进程，驱动托盘图标/提示
 watch(connected, (s) => window.electronAPI?.reportConnection(s), { immediate: true })
@@ -62,7 +62,7 @@ function winClose() { window.electronAPI?.close() }
       <aside class="app-sider">
         <div class="sider-scroll">
           <ServerMetrics :metrics="snapshot?.serverMetrics ?? null" />
-          <StatusSidebar :snapshot="snapshot" />
+          <StatusSidebar :snapshot="snapshot" @select-proxy-node="selectProxyNode" />
         </div>
       </aside>
 

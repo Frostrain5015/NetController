@@ -32,13 +32,15 @@ type ProjectStatus struct {
 }
 
 type ProxyStatus struct {
-	Alive              bool    `json:"alive"`
-	Port               int     `json:"port"`
-	PortOpen           bool    `json:"portOpen"`
-	ActiveConnections  int     `json:"activeConnections"`
-	ApiAccessible      bool    `json:"apiAccessible"`
-	TrafficRemainingGB float64 `json:"trafficRemainingGB"`
-	PlanExpiry         string  `json:"planExpiry"`
+	Alive              bool     `json:"alive"`
+	Port               int      `json:"port"`
+	PortOpen           bool     `json:"portOpen"`
+	ActiveConnections  int      `json:"activeConnections"`
+	ApiAccessible      bool     `json:"apiAccessible"`
+	TrafficRemainingGB *float64 `json:"trafficRemainingGB"`
+	TrafficUsedGB      *float64 `json:"trafficUsedGB"`
+	TrafficTotalGB     *float64 `json:"trafficTotalGB"`
+	PlanExpiry         string   `json:"planExpiry"`
 }
 
 type ProxyNodeOut struct {
@@ -46,10 +48,18 @@ type ProxyNodeOut struct {
 	DisplayName string    `json:"displayName"`
 	Group       string    `json:"group"`
 	Type        string    `json:"type"`
+	GroupType   string    `json:"groupType"`
 	LatencyMs   int       `json:"latencyMs"`
 	Reachable   bool      `json:"reachable"`
+	Selected    bool      `json:"selected"`
 	Location    []float64 `json:"location"`
 	Country     string    `json:"country"`
+}
+
+type ClientMessage struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Group string `json:"group"`
 }
 
 func main() {
@@ -62,6 +72,9 @@ func main() {
 	}
 
 	hub := ws.NewHub()
+	hub.SetMessageHandler(func(msg []byte) {
+		handleClientMessage(hub, cfg, msg)
+	})
 	http.HandleFunc("/ws", hub.HandleWS)
 
 	go func() {
@@ -94,12 +107,22 @@ var prevReachable = make(map[string]bool)
 var prevLatencies = make(map[string]int)
 var apiPort int
 var testURL string
-var cachedTrafficGB float64
+var cachedTrafficRemainingGB *float64
+var cachedTrafficUsedGB *float64
+var cachedTrafficTotalGB *float64
 var cachedExpiry string
+
+var deprecatedProjects = map[string]bool{
+	"Webhook":        true,
+	"deploy-webhook": true,
+}
 
 func collectProjectStatus(cfg *config.Config) []ProjectStatus {
 	var projects []ProjectStatus
 	for _, p := range cfg.Projects {
+		if deprecatedProjects[p.Name] || deprecatedProjects[p.ProcessName] {
+			continue
+		}
 		pid, alive := collector.FindProcessByName(p.ProcessName)
 		cpu, memMB := collector.GetProcessCPUAndMem(p.ProcessName)
 		projects = append(projects, ProjectStatus{
@@ -128,27 +151,24 @@ func collectAndBroadcast(hub *ws.Hub, cfg *config.Config) {
 		testURL = "https://www.gstatic.com/generate_204"
 	}
 	snap.Proxy = ProxyStatus{
-		Alive:   pxAlive,
-		Port:    cfg.Proxy.Port,
+		Alive:    pxAlive,
+		Port:     cfg.Proxy.Port,
 		PortOpen: collector.CheckPort(cfg.Proxy.Port),
 	}
 
 	if pxAlive {
-		nodes, trafficGB, expiry := fetchClashProxies(apiPort)
-		cachedTrafficGB = trafficGB
-		cachedExpiry = expiry
-		snap.Proxy.TrafficRemainingGB = trafficGB
-		snap.Proxy.PlanExpiry = expiry
+		nodes, usage := fetchClashProxies(apiPort)
+		updateProxyCache(nodes, usage)
+		snap.Proxy.ActiveConnections = fetchClashConnectionCount(apiPort)
+		snap.Proxy.TrafficRemainingGB = cachedTrafficRemainingGB
+		snap.Proxy.TrafficUsedGB = cachedTrafficUsedGB
+		snap.Proxy.TrafficTotalGB = cachedTrafficTotalGB
+		snap.Proxy.PlanExpiry = cachedExpiry
 		if len(nodes) > 0 {
 			snap.Proxy.ApiAccessible = true
-			cachedNodes = nodes
 			snap.ProxyNodes = make([]ProxyNodeOut, 0, len(nodes))
 			for _, n := range nodes {
-				snap.ProxyNodes = append(snap.ProxyNodes, ProxyNodeOut{
-					Name: n.Name, DisplayName: n.DisplayName,
-					Group: n.Group, Type: n.Type,
-					Location: n.Location, Country: n.Country,
-				})
+				snap.ProxyNodes = append(snap.ProxyNodes, proxyNodeOutWithStatus(n))
 			}
 		}
 	}
@@ -172,12 +192,80 @@ func collectAndBroadcastSys(hub *ws.Hub, cfg *config.Config) {
 	snap.Proxy = ProxyStatus{
 		Alive: pxAlive, Port: cfg.Proxy.Port,
 		PortOpen: collector.CheckPort(cfg.Proxy.Port),
-		ApiAccessible:      len(cachedNodes) > 0,
-		TrafficRemainingGB: cachedTrafficGB,
-		PlanExpiry:         cachedExpiry,
+	}
+	if pxAlive {
+		nodes, usage := fetchClashProxies(apiPort)
+		updateProxyCache(nodes, usage)
+		snap.Proxy.ActiveConnections = fetchClashConnectionCount(apiPort)
+		snap.Proxy.ApiAccessible = len(cachedNodes) > 0
+		snap.Proxy.TrafficRemainingGB = cachedTrafficRemainingGB
+		snap.Proxy.TrafficUsedGB = cachedTrafficUsedGB
+		snap.Proxy.TrafficTotalGB = cachedTrafficTotalGB
+		snap.Proxy.PlanExpiry = cachedExpiry
+		for _, n := range cachedNodes {
+			snap.ProxyNodes = append(snap.ProxyNodes, proxyNodeOutWithStatus(n))
+		}
+	} else {
+		updateProxyCache(nil, subscriptionUsage{})
 	}
 	data, _ := json.Marshal(snap)
+	hub.SetSnapshot(data)
 	hub.Broadcast(data)
+}
+
+func updateProxyCache(nodes []proxyNodeInfo, usage subscriptionUsage) {
+	cachedNodes = nodes
+	cachedTrafficRemainingGB = usage.RemainingGB
+	cachedTrafficUsedGB = usage.UsedGB
+	cachedTrafficTotalGB = usage.TotalGB
+	cachedExpiry = usage.Expiry
+}
+
+func proxyNodeOut(n proxyNodeInfo) ProxyNodeOut {
+	return ProxyNodeOut{
+		Name: n.Name, DisplayName: n.DisplayName,
+		Group: n.Group, GroupType: n.GroupType, Type: n.Type,
+		Location: n.Location, Country: n.Country, Selected: n.Selected,
+	}
+}
+
+func proxyNodeOutWithStatus(n proxyNodeInfo) ProxyNodeOut {
+	out := proxyNodeOut(n)
+	out.Reachable = prevReachable[n.Name]
+	out.LatencyMs = prevLatencies[n.Name]
+	return out
+}
+
+func handleClientMessage(hub *ws.Hub, cfg *config.Config, data []byte) {
+	var msg ClientMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return
+	}
+	if msg.Type != "proxy-select" || msg.Name == "" {
+		return
+	}
+	port := apiPort
+	if port == 0 {
+		port = cfg.Proxy.ClashApiPort
+	}
+	if port == 0 {
+		port = 9090
+	}
+	err := selectProxyNode(port, msg.Group, msg.Name)
+	result := map[string]interface{}{
+		"type":  "proxy-select-result",
+		"name":  msg.Name,
+		"group": msg.Group,
+		"ok":    err == nil,
+	}
+	if err != nil {
+		result["message"] = err.Error()
+	}
+	payload, _ := json.Marshal(result)
+	hub.Broadcast(payload)
+	if err == nil {
+		collectAndBroadcast(hub, cfg)
+	}
 }
 
 func pingAllNodes(hub *ws.Hub, cfg *config.Config) {
@@ -195,7 +283,7 @@ func pingAllNodes(hub *ws.Hub, cfg *config.Config) {
 			was := prevReachable[node.Name]
 			mu.Lock()
 			next[node.Name] = reachable
-				prevLatencies[node.Name] = ms
+			prevLatencies[node.Name] = ms
 			mu.Unlock()
 			msg, _ := json.Marshal(map[string]interface{}{
 				"type":         "proxy-ping-result",
@@ -220,20 +308,16 @@ func pingAllNodes(hub *ws.Hub, cfg *config.Config) {
 		}
 		snap.Proxy = ProxyStatus{
 			Alive: true, Port: cfg.Proxy.Port,
-			PortOpen: collector.CheckPort(cfg.Proxy.Port),
+			PortOpen:           collector.CheckPort(cfg.Proxy.Port),
 			ApiAccessible:      true,
-			TrafficRemainingGB: cachedTrafficGB,
+			ActiveConnections:  fetchClashConnectionCount(apiPort),
+			TrafficRemainingGB: cachedTrafficRemainingGB,
+			TrafficUsedGB:      cachedTrafficUsedGB,
+			TrafficTotalGB:     cachedTrafficTotalGB,
 			PlanExpiry:         cachedExpiry,
 		}
 		for _, n := range cachedNodes {
-			reachable := prevReachable[n.Name]
-			latency := prevLatencies[n.Name]
-			snap.ProxyNodes = append(snap.ProxyNodes, ProxyNodeOut{
-				Name: n.Name, DisplayName: n.DisplayName,
-				Group: n.Group, Type: n.Type,
-				Location: n.Location, Country: n.Country,
-				Reachable: reachable, LatencyMs: latency,
-			})
+			snap.ProxyNodes = append(snap.ProxyNodes, proxyNodeOutWithStatus(n))
 		}
 		data, _ := json.Marshal(snap)
 		hub.SetSnapshot(data)

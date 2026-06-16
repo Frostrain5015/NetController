@@ -32,11 +32,13 @@ interface ProxyStatus {
   name?: string; alive: boolean; port: number; portOpen: boolean; activeConnections: number
   apiAccessible: boolean
   trafficRemainingGB: number | null
+  trafficUsedGB: number | null
+  trafficTotalGB: number | null
   planExpiry: string | null
 }
 interface ProxyNode {
-  name: string; displayName: string; group: string; type: string
-  latencyMs: number; reachable: boolean
+  name: string; displayName: string; group: string; groupType: string; type: string
+  latencyMs: number; reachable: boolean; selected: boolean
   location: [number, number] | null; country: string
 }
 interface ServerMetrics {

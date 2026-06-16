@@ -4,8 +4,10 @@ import { Boxes, Waypoints, Globe } from 'lucide-vue-next'
 import FlagIcon from './FlagIcon.vue'
 
 const props = defineProps<{ snapshot: Snapshot | null }>()
+const emit = defineEmits<{ selectProxyNode: [node: ProxyNode] }>()
 
-const projects = computed(() => props.snapshot?.projects ?? [])
+const deprecatedProjectNames = new Set(['Webhook'])
+const projects = computed(() => (props.snapshot?.projects ?? []).filter(p => !deprecatedProjectNames.has(p.name)))
 const proxy = computed(() => props.snapshot?.proxy ?? null)
 const proxyNodes = computed(() => props.snapshot?.proxyNodes ?? [])
 const locatedNodes = computed(() => proxyNodes.value.filter(n => n.location !== null))
@@ -16,13 +18,24 @@ function childOf(parent: string) { return projects.value.filter(p => p.parent ==
 
 const trafficPct = computed(() => {
   const g = proxy.value?.trafficRemainingGB
-  if (g == null) return 0
-  return Math.min((g / 200) * 100, 100)
+  const total = proxy.value?.trafficTotalGB
+  if (g == null || !total) return 0
+  return Math.min((g / total) * 100, 100)
 })
 const trafficTone = computed(() => {
   const g = proxy.value?.trafficRemainingGB ?? 0
   return g > 40 ? 'ok' : g > 10 ? 'warn' : 'bad'
 })
+const trafficLabel = computed(() => {
+  const g = proxy.value?.trafficRemainingGB
+  if (g == null) return ''
+  const total = proxy.value?.trafficTotalGB
+  return total ? `${g.toFixed(1)} / ${total.toFixed(1)} GB` : `${g.toFixed(1)} GB`
+})
+
+function selectProxyNode(node: ProxyNode) {
+  emit('selectProxyNode', node)
+}
 </script>
 
 <template>
@@ -75,7 +88,7 @@ const trafficTone = computed(() => {
     <div v-if="proxy?.trafficRemainingGB != null" class="meter">
       <div class="meter-head">
         <span>剩余流量</span>
-        <span class="mono">{{ proxy.trafficRemainingGB.toFixed(1) }} / 200 GB</span>
+        <span class="mono">{{ trafficLabel }}</span>
       </div>
       <div class="meter-track">
         <div class="meter-fill" :class="trafficTone" :style="{ width: trafficPct + '%' }"></div>
@@ -99,22 +112,38 @@ const trafficTone = computed(() => {
       {{ proxy && proxy.alive ? '未获取到代理节点（Clash API 未响应）' : '代理未运行' }}
     </div>
 
-    <div v-for="n in locatedNodes" :key="n.name" class="row">
+    <div
+      v-for="n in locatedNodes"
+      :key="n.name"
+      class="row node-row"
+      :class="{ selected: n.selected }"
+      :title="`切换到 ${n.displayName || n.name}`"
+      @click="selectProxyNode(n)"
+    >
       <span class="node-dot" :class="n.reachable ? 'on' : 'off'"></span>
       <FlagIcon :code="n.country" />
       <span class="row-name">{{ n.displayName || n.name }}</span>
       <span class="spacer"></span>
+      <span v-if="n.selected" class="chip ok">ACTIVE</span>
       <span v-if="n.reachable" class="chip ok mono">{{ n.latencyMs }}ms</span>
       <span v-else-if="(n as any).tested" class="chip bad">超时</span>
       <span v-else class="chip muted">检测中</span>
     </div>
 
     <div v-if="unlocatedNodes.length > 0" class="sub-head">未定位节点</div>
-    <div v-for="n in unlocatedNodes" :key="n.name" class="row">
+    <div
+      v-for="n in unlocatedNodes"
+      :key="n.name"
+      class="row node-row"
+      :class="{ selected: n.selected }"
+      :title="`切换到 ${n.displayName || n.name}`"
+      @click="selectProxyNode(n)"
+    >
       <span class="node-dot" :class="n.reachable ? 'on' : 'off'"></span>
       <span class="chip ghost">{{ n.type }}</span>
       <span class="row-name">{{ n.displayName || n.name }}</span>
       <span class="spacer"></span>
+      <span v-if="n.selected" class="chip ok">ACTIVE</span>
       <span v-if="n.reachable" class="chip ok mono">{{ n.latencyMs }}ms</span>
       <span v-else-if="(n as any).tested" class="chip bad">超时</span>
       <span v-else class="chip muted">检测中</span>
@@ -148,6 +177,8 @@ const trafficTone = computed(() => {
 }
 .row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .row.child { margin-left: 16px; background: var(--bg-deep); }
+.row.node-row { cursor: pointer; }
+.row.node-row.selected { border-color: rgba(61, 220, 151, 0.45); background: rgba(61, 220, 151, 0.08); }
 .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .spacer { flex: 1; }
 

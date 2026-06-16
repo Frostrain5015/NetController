@@ -10,6 +10,16 @@ export function useAgentData() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let wsUrl = 'wss://frostrain.tech/nc/ws'
 
+  function selectProxyNode(node: ProxyNode) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify({
+      type: 'proxy-select',
+      name: node.name,
+      group: node.group,
+    }))
+    return true
+  }
+
   function connect() {
     if (ws) { try { ws.close() } catch { /* */ } }
     connected.value = 'connecting'
@@ -29,6 +39,11 @@ export function useAgentData() {
             node.latencyMs = data.latencyMs
             node.reachable = data.reachable
             ;(node as any).tested = true
+          }
+        } else if (data.type === 'proxy-select-result') {
+          if (!snapshot.value || !data.ok) return
+          for (const node of snapshot.value.proxyNodes) {
+            node.selected = node.name === data.name
           }
         } else {
           const prevNodes = snapshot.value?.proxyNodes ?? []
@@ -73,5 +88,5 @@ export function useAgentData() {
     if (ws) { try { ws.close() } catch { /* */ } }
   })
 
-  return { snapshot, connected }
+  return { snapshot, connected, selectProxyNode }
 }

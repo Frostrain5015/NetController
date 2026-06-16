@@ -14,9 +14,10 @@ var upgrader = websocket.Upgrader{
 }
 
 type Hub struct {
-	mu       sync.RWMutex
-	clients  map[*websocket.Conn]chan []byte
-	lastSnap []byte
+	mu             sync.RWMutex
+	clients        map[*websocket.Conn]chan []byte
+	lastSnap       []byte
+	messageHandler func([]byte)
 }
 
 func NewHub() *Hub {
@@ -26,6 +27,12 @@ func NewHub() *Hub {
 func (h *Hub) SetSnapshot(data []byte) {
 	h.mu.Lock()
 	h.lastSnap = data
+	h.mu.Unlock()
+}
+
+func (h *Hub) SetMessageHandler(handler func([]byte)) {
+	h.mu.Lock()
+	h.messageHandler = handler
 	h.mu.Unlock()
 }
 
@@ -76,8 +83,15 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			conn.Close()
 		}()
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
 				break
+			}
+			h.mu.RLock()
+			handler := h.messageHandler
+			h.mu.RUnlock()
+			if handler != nil {
+				go handler(msg)
 			}
 		}
 	}()
