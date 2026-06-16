@@ -157,13 +157,16 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 		if groupTypes[t] {
 			for _, name := range obj.All {
 				if info, exists := seed[name]; !exists {
-					seed[name] = &proxyNodeInfo{Name: name, Group: key, GroupType: t, Selected: obj.Now == name}
+					seed[name] = &proxyNodeInfo{Name: name, Group: key, GroupType: t, Selected: false}
 				} else {
-					if preferGroup(info.GroupType, t) {
+					if preferGroup(info.Group, info.GroupType, key, t) {
 						info.Group = key
 						info.GroupType = t
 					}
-					info.Selected = info.Selected || obj.Now == name
+					// 只在首选的 selector 组中判断 Selected
+					if obj.Now == name && preferGroup(info.Group, info.GroupType, key, t) {
+						info.Selected = true
+					}
 				}
 				textUsage.mergeText(name)
 			}
@@ -178,6 +181,9 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 
 	var nodes []proxyNodeInfo
 	for _, info := range seed {
+		if isSubscriptionMarker(info.Name) {
+			continue
+		}
 		if !leafTypes[info.Type] && !isAutoSelectProxy(info.Name, info.Type) {
 			continue
 		}
@@ -204,14 +210,32 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 	return nodes, usage
 }
 
-func preferGroup(current string, next string) bool {
-	if current == "" {
+func preferGroup(currentGroup string, currentType string, nextGroup string, nextType string) bool {
+	if currentGroup == "" {
 		return true
 	}
-	if current != "selector" && next == "selector" {
+	if currentType != "selector" && nextType == "selector" {
 		return true
+	}
+	if currentType == "selector" && nextType == "selector" {
+		return selectorGroupRank(nextGroup) < selectorGroupRank(currentGroup)
 	}
 	return false
+}
+
+func selectorGroupRank(name string) int {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.Contains(name, "节点选择"),
+		strings.Contains(name, "節點選擇"),
+		strings.Contains(lower, "proxy"),
+		strings.Contains(lower, "select"):
+		return 0
+	case name == "GLOBAL":
+		return 1
+	default:
+		return 10
+	}
 }
 
 func isAutoSelectProxy(name string, proxyType string) bool {
@@ -367,6 +391,12 @@ func (u *subscriptionUsage) mergeText(text string) {
 	if u.Expiry == "" {
 		u.Expiry = parseExpiry(text)
 	}
+}
+
+func isSubscriptionMarker(name string) bool {
+	return parseTrafficRemaining(name) != nil ||
+		parseTrafficTotal(name) != nil ||
+		parseExpiry(name) != ""
 }
 
 func parseTrafficRemaining(name string) *float64 {

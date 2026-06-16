@@ -18,6 +18,8 @@ const serverLocation: [number, number] = [120.15, 30.28]
 const serverRegionColor = '#1677ff'
 const localRegionColor = '#13c2c2'
 const activeProxyColor = '#ffb454'
+const nodeReachableColor = '#6b8cae'
+const nodeUnreachableColor = '#8a4a5a'
 
 type CountryGroup = {
   displayName: string
@@ -138,7 +140,7 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
       symbolSize: (value: any[]) => (value?.[5] ? 13 : 8),
       label: { formatter: '{b}', position: 'right', show: true, color: (p: any) => (p.value?.[5] ? activeProxyColor : '#8899aa'), fontSize: 12 },
       itemStyle: {
-        color: (p: any) => (p.value?.[5] ? activeProxyColor : p.value?.[2] ? '#52c41a' : '#ff4d4f'),
+        color: (p: any) => (p.value?.[5] ? activeProxyColor : p.value?.[2] ? nodeReachableColor : nodeUnreachableColor),
         shadowBlur: (p: any) => (p.value?.[5] ? 14 : 6),
         shadowColor: (p: any) => (p.value?.[5] ? activeProxyColor : 'rgba(0,0,0,0.5)'),
       },
@@ -172,7 +174,7 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
       animationDelay: 800,
       data: groups.filter(g => g.reachable && !g.selected).map(g => ({
         name: g.country,
-        coords: [hz, g.location], lineStyle: { color: '#52c41a33', width: 1 },
+        coords: [hz, g.location], lineStyle: { color: '#6b8cae33', width: 1 },
       })),
       effect: { show: true, period: 6, trailLength: 0.3, symbol: 'arrow', symbolSize: 6, color: '#1677ff' },
     })
