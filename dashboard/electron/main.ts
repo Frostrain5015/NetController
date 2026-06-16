@@ -38,7 +38,14 @@ const STATE_RGB: Record<ConnState, [number, number, number]> = {
   disconnected: [255, 93, 108],
 }
 
-function trayIcon(state: ConnState): NativeImage {
+function resolveIcon(): string | undefined {
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, 'icon.ico')]
+    : [join(process.cwd(), 'build', 'icon.ico'), join(app.getAppPath(), 'build', 'icon.ico')]
+  return candidates.find((path) => existsSync(path))
+}
+
+function fallbackTrayIcon(state: ConnState): NativeImage {
   const S = 32, SS = 3, N = S * SS
   const buf = Buffer.alloc(S * S * 4)
   const [cr, cg, cb] = STATE_RGB[state]
@@ -64,15 +71,33 @@ function trayIcon(state: ConnState): NativeImage {
   return nativeImage.createFromBuffer(buf, { width: S, height: S })
 }
 
+function trayIcon(state: ConnState): NativeImage {
+  const icon = resolveIcon()
+  if (icon) {
+    const image = nativeImage.createFromPath(icon)
+    if (!image.isEmpty()) return image
+  }
+  return fallbackTrayIcon(state)
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
 function createTray() {
   tray = new Tray(trayIcon('disconnected'))
   tray.setToolTip('NetController — 离线')
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示窗口', click: () => { mainWindow?.show(); mainWindow?.focus() } },
+    { label: '显示窗口', click: showMainWindow },
     { type: 'separator' },
     { label: '退出', click: () => { quitNow() } },
   ]))
-  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus() })
+  tray.on('click', showMainWindow)
+  tray.on('double-click', showMainWindow)
 }
 
 function updateTray(state: ConnState) {
@@ -92,13 +117,6 @@ function quitNow() {
     try { mainWindow.close() } catch { /* */ }
   }
   app.quit()
-}
-
-function resolveIcon(): string | undefined {
-  // Packaged builds embed the icon in the exe; in dev load it from the repo.
-  const dev = join(process.cwd(), 'build', 'icon.ico')
-  if (!app.isPackaged && existsSync(dev)) return dev
-  return undefined
 }
 
 function createWindow() {
@@ -171,11 +189,7 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
-    }
+    showMainWindow()
   })
 
   app.whenReady().then(() => {
@@ -186,7 +200,7 @@ if (!gotLock) {
   })
 
   app.on('window-all-closed', () => { if (quitting) app.quit() })
-  app.on('activate', () => { BrowserWindow.getAllWindows().length === 0 ? createWindow() : mainWindow?.show() })
+  app.on('activate', showMainWindow)
   app.on('before-quit', () => {
     quitting = true
     try { mainWindow?.removeAllListeners('close') } catch { /* */ }

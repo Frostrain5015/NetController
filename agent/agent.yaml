@@ -19,9 +19,6 @@ projects:
   - name: "Blades of Hex"
     processName: "blades-of-hex"
     port: 3000
-  - name: "Webhook"
-    processName: "deploy-webhook"
-    port: 9000
   - name: "Nginx"
     processName: "nginx"
     port: 80

@@ -9,6 +9,10 @@ files:
   - dist-electron
   - node_modules
 
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+
 icon: build/icon.ico
 
 win:
