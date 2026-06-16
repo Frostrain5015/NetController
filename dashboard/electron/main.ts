@@ -168,6 +168,19 @@ function setupAutoUpdate() {
   ipcMain.on('update:download', () => {
     autoUpdater.downloadUpdate().catch((e) => sendToRenderer('update:error', String(e)))
   })
+  ipcMain.handle('update:check', async () => {
+    if (!app.isPackaged) {
+      sendToRenderer('update:none')
+      return false
+    }
+    try {
+      await autoUpdater.checkForUpdates()
+      return true
+    } catch (e) {
+      sendToRenderer('update:error', String(e))
+      return false
+    }
+  })
 
   if (app.isPackaged) {
     autoUpdater.checkForUpdates().catch(() => { /* offline / no release yet */ })

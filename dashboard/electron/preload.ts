@@ -21,8 +21,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('update:progress', (_e: IpcRendererEvent, p: UpdateProgress) => cb(p)),
     onDownloaded: (cb: (info: UpdateInfo) => void) =>
       ipcRenderer.on('update:downloaded', (_e: IpcRendererEvent, info: UpdateInfo) => cb(info)),
+    onNone: (cb: () => void) =>
+      ipcRenderer.on('update:none', () => cb()),
     onError: (cb: (msg: string) => void) =>
       ipcRenderer.on('update:error', (_e: IpcRendererEvent, msg: string) => cb(msg)),
+    check: () => ipcRenderer.invoke('update:check'),
     download: () => ipcRenderer.send('update:download'),
   },
 })

@@ -14,6 +14,20 @@ const chart = shallowRef<echarts.ECharts | null>(null)
 let resizeObs: ResizeObserver | null = null
 const showOverseasLines = ref(false)
 let animTimer: ReturnType<typeof setTimeout> | null = null
+const serverLocation: [number, number] = [120.15, 30.28]
+const serverRegionColor = '#1677ff'
+const localRegionColor = '#13c2c2'
+const activeProxyColor = '#ffb454'
+
+type CountryGroup = {
+  displayName: string
+  location: [number, number]
+  country: string
+  reachable: boolean
+  selected: boolean
+  minLatency: number
+  count: number
+}
 
 const connColor = computed(() => {
   if (props.connected === 'connecting') return '#faad14'
@@ -21,19 +35,25 @@ const connColor = computed(() => {
 })
 
 const nodeGroups = computed(() => {
-  const map = new Map<string, { displayName: string; location: [number, number]; country: string; reachable: boolean; minLatency: number; count: number }>()
+  const map = new Map<string, CountryGroup>()
   for (const n of props.proxyNodes) {
     if (!n.location) continue
     const key = n.country
     const g = map.get(key)
     if (g) {
       if (n.reachable) { g.reachable = true; g.minLatency = Math.min(g.minLatency, n.latencyMs || Infinity) }
+      if (n.selected) {
+        g.selected = true
+        g.displayName = n.displayName || n.name
+        g.location = n.location
+      }
       g.count++
     } else {
       map.set(key, {
         displayName: n.displayName || n.name,
         location: n.location, country: n.country,
         reachable: n.reachable,
+        selected: n.selected,
         minLatency: n.reachable && n.latencyMs > 0 ? n.latencyMs : Infinity,
         count: 1,
       })
@@ -42,22 +62,65 @@ const nodeGroups = computed(() => {
   return [...map.values()]
 })
 
+const activeGroup = computed(() => nodeGroups.value.find(g => g.selected) ?? null)
+
+function worldRegionName(country: string) {
+  const names: Record<string, string> = {
+    HK: 'Hong Kong S.A.R.',
+    JP: 'Japan',
+    SG: 'Singapore',
+    US: 'United States of America',
+    TW: 'Taiwan',
+    KR: 'South Korea',
+    DE: 'Germany',
+    GB: 'United Kingdom',
+    FR: 'France',
+    IN: 'India',
+    CA: 'Canada',
+    AU: 'Australia',
+    NL: 'Netherlands',
+    RU: 'Russia',
+    BR: 'Brazil',
+    VN: 'Vietnam',
+    TH: 'Thailand',
+    PH: 'Philippines',
+    MY: 'Malaysia',
+    ID: 'Indonesia',
+    TR: 'Turkey',
+    AE: 'United Arab Emirates',
+    ZA: 'South Africa',
+    AR: 'Argentina',
+    IT: 'Italy',
+    ES: 'Spain',
+    PL: 'Poland',
+    SE: 'Sweden',
+    CH: 'Switzerland',
+    FI: 'Finland',
+  }
+  return names[country] || country
+}
+
 function buildOption(showOverseas: boolean): echarts.EChartsOption {
-  const hz = [120.15, 30.28]
+  const hz = serverLocation
   const groups = nodeGroups.value
+  const currentGroup = activeGroup.value
   const showPcLine = !!props.myLocation
   const myCountry = props.myLocation?.country || ''
+  const activeRegionName = currentGroup ? worldRegionName(currentGroup.country) : ''
 
   const scatterData = groups.map(g => ({
     name: g.displayName,
-    value: [...g.location, g.reachable ? 1 : 0, g.minLatency < Infinity ? g.minLatency : 9999, g.count],
+    value: [...g.location, g.reachable ? 1 : 0, g.minLatency < Infinity ? g.minLatency : 9999, g.count, g.selected ? 1 : 0],
   }))
 
   const regions: any[] = [
-    { name: 'China', itemStyle: { areaColor: '#1a3050', borderColor: '#1677ff', borderWidth: 1 } },
+    { name: 'China', itemStyle: { areaColor: '#1a3050', borderColor: serverRegionColor, borderWidth: 1 } },
   ]
   if (myCountry && myCountry !== 'China') {
-    regions.push({ name: myCountry, itemStyle: { areaColor: '#162d40', borderColor: '#13c2c2', borderWidth: 1 } })
+    regions.push({ name: myCountry, itemStyle: { areaColor: '#162d40', borderColor: localRegionColor, borderWidth: 1 } })
+  }
+  if (activeRegionName) {
+    regions.push({ name: activeRegionName, itemStyle: { areaColor: '#3a2b19', borderColor: activeProxyColor, borderWidth: 1.4 } })
   }
 
   const series: any[] = [
@@ -72,9 +135,13 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
     {
       id: 'groups', type: 'effectScatter', coordinateSystem: 'geo',
       data: scatterData,
-      symbolSize: 8,
-      label: { formatter: '{b}', position: 'right', show: true, color: '#8899aa', fontSize: 12 },
-      itemStyle: { color: (p: any) => (p.value[2] ? '#52c41a' : '#ff4d4f'), shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.5)' },
+      symbolSize: (value: any[]) => (value?.[5] ? 13 : 8),
+      label: { formatter: '{b}', position: 'right', show: true, color: (p: any) => (p.value?.[5] ? activeProxyColor : '#8899aa'), fontSize: 12 },
+      itemStyle: {
+        color: (p: any) => (p.value?.[5] ? activeProxyColor : p.value?.[2] ? '#52c41a' : '#ff4d4f'),
+        shadowBlur: (p: any) => (p.value?.[5] ? 14 : 6),
+        shadowColor: (p: any) => (p.value?.[5] ? activeProxyColor : 'rgba(0,0,0,0.5)'),
+      },
     },
   ]
 
@@ -103,12 +170,24 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
     series.push({
       id: 'overseas-lines', type: 'lines', coordinateSystem: 'geo', polyline: false,
       animationDelay: 800,
-      data: groups.filter(g => g.reachable).map(g => ({
+      data: groups.filter(g => g.reachable && !g.selected).map(g => ({
         name: g.country,
         coords: [hz, g.location], lineStyle: { color: '#52c41a33', width: 1 },
       })),
       effect: { show: true, period: 6, trailLength: 0.3, symbol: 'arrow', symbolSize: 6, color: '#1677ff' },
     })
+    if (currentGroup) {
+      series.push({
+        id: 'current-proxy-line', type: 'lines', coordinateSystem: 'geo', polyline: false,
+        zlevel: 2,
+        data: [{
+          name: currentGroup.displayName,
+          coords: [hz, currentGroup.location],
+          lineStyle: { color: activeProxyColor, width: 2.2, opacity: currentGroup.reachable ? 0.9 : 0.55 },
+        }],
+        effect: { show: true, period: 3.6, trailLength: 0.28, symbol: 'arrow', symbolSize: 8, color: activeProxyColor },
+      })
+    }
   }
 
   return {

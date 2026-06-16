@@ -10,11 +10,25 @@ const deprecatedProjectNames = new Set(['Webhook'])
 const projects = computed(() => (props.snapshot?.projects ?? []).filter(p => !deprecatedProjectNames.has(p.name)))
 const proxy = computed(() => props.snapshot?.proxy ?? null)
 const proxyNodes = computed(() => props.snapshot?.proxyNodes ?? [])
-const locatedNodes = computed(() => proxyNodes.value.filter(n => n.location !== null))
-const unlocatedNodes = computed(() => proxyNodes.value.filter(n => n.location === null))
+const strategyNodes = computed(() => proxyNodes.value.filter(isStrategyNode).sort(compareProxyNodes))
+const locatedNodes = computed(() => proxyNodes.value.filter(n => n.location !== null && !isStrategyNode(n)).sort(compareProxyNodes))
+const unlocatedNodes = computed(() => proxyNodes.value.filter(n => n.location === null && !isStrategyNode(n)).sort(compareProxyNodes))
 const rootProjects = computed(() => projects.value.filter(p => !p.parent))
 
 function childOf(parent: string) { return projects.value.filter(p => p.parent === parent) }
+
+function compareProxyNodes(a: ProxyNode, b: ProxyNode) {
+  if (a.reachable !== b.reachable) return a.reachable ? -1 : 1
+  if (a.selected !== b.selected) return a.selected ? -1 : 1
+  const aLatency = a.reachable && a.latencyMs > 0 ? a.latencyMs : Number.POSITIVE_INFINITY
+  const bLatency = b.reachable && b.latencyMs > 0 ? b.latencyMs : Number.POSITIVE_INFINITY
+  if (aLatency !== bLatency) return aLatency - bLatency
+  return (a.displayName || a.name).localeCompare(b.displayName || b.name, 'zh-Hans-CN')
+}
+
+function isStrategyNode(node: ProxyNode) {
+  return ['selector', 'urltest', 'fallback', 'loadbalance', 'relay'].includes(node.type)
+}
 
 const trafficPct = computed(() => {
   const g = proxy.value?.trafficRemainingGB
@@ -110,6 +124,22 @@ function selectProxyNode(node: ProxyNode) {
     </div>
     <div v-if="proxyNodes.length === 0" class="empty">
       {{ proxy && proxy.alive ? '未获取到代理节点（Clash API 未响应）' : '代理未运行' }}
+    </div>
+
+    <div
+      v-for="n in strategyNodes"
+      :key="n.name"
+      class="row node-row strategy-row"
+      :class="{ selected: n.selected }"
+      :title="`切换到 ${n.displayName || n.name}`"
+      @click="selectProxyNode(n)"
+    >
+      <span class="node-dot" :class="n.selected ? 'on' : 'off'"></span>
+      <span class="chip accent">AUTO</span>
+      <span class="row-name">{{ n.displayName || n.name }}</span>
+      <span class="spacer"></span>
+      <span v-if="n.selected" class="chip ok">ACTIVE</span>
+      <span v-else class="chip muted">策略</span>
     </div>
 
     <div

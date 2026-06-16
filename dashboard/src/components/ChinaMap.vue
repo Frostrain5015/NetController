@@ -14,6 +14,20 @@ const chart = shallowRef<echarts.ECharts | null>(null)
 let resizeObs: ResizeObserver | null = null
 const showOverseasLines = ref(false)
 let animTimer: ReturnType<typeof setTimeout> | null = null
+const serverLocation: [number, number] = [120.15, 30.28]
+const serverRegionColor = '#1677ff'
+const localRegionColor = '#13c2c2'
+const activeProxyColor = '#ffb454'
+
+type CountryGroup = {
+  displayName: string
+  location: [number, number]
+  country: string
+  reachable: boolean
+  selected: boolean
+  minLatency: number
+  count: number
+}
 
 const connColor = computed(() => {
   if (props.connected === 'connecting') return '#faad14'
@@ -21,19 +35,25 @@ const connColor = computed(() => {
 })
 
 const nodeGroups = computed(() => {
-  const map = new Map<string, { displayName: string; location: [number, number]; country: string; reachable: boolean; minLatency: number; count: number }>()
+  const map = new Map<string, CountryGroup>()
   for (const n of props.proxyNodes) {
     if (!n.location) continue
     const key = n.country
     const g = map.get(key)
     if (g) {
       if (n.reachable) { g.reachable = true; g.minLatency = Math.min(g.minLatency, n.latencyMs || Infinity) }
+      if (n.selected) {
+        g.selected = true
+        g.displayName = n.displayName || n.name
+        g.location = n.location
+      }
       g.count++
     } else {
       map.set(key, {
         displayName: n.displayName || n.name,
         location: n.location, country: n.country,
         reachable: n.reachable,
+        selected: n.selected,
         minLatency: n.reachable && n.latencyMs > 0 ? n.latencyMs : Infinity,
         count: 1,
       })
@@ -41,6 +61,8 @@ const nodeGroups = computed(() => {
   }
   return [...map.values()]
 })
+
+const activeGroup = computed(() => nodeGroups.value.find(g => g.selected) ?? null)
 
 function myRegionName(): string {
   if (!props.myLocation?.region) return ''
@@ -56,13 +78,14 @@ function myRegionName(): string {
 }
 
 function buildOption(showOverseas: boolean): echarts.EChartsOption {
-  const hz = [120.15, 30.28]
+  const hz = serverLocation
   const groups = nodeGroups.value
+  const currentGroup = activeGroup.value
   const showPcLine = !!props.myLocation
 
   const scatterData = groups.map(g => ({
     name: g.displayName,
-    value: [...g.location, g.reachable ? 1 : 0, g.minLatency < Infinity ? g.minLatency : 9999, g.count],
+    value: [...g.location, g.reachable ? 1 : 0, g.minLatency < Infinity ? g.minLatency : 9999, g.count, g.selected ? 1 : 0],
   }))
 
   const series: any[] = [
@@ -77,9 +100,13 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
     {
       id: 'groups', type: 'effectScatter', coordinateSystem: 'geo',
       data: scatterData,
-      symbolSize: 8,
-      label: { formatter: '{b}', position: 'right', show: true, color: '#8899aa', fontSize: 12 },
-      itemStyle: { color: (p: any) => (p.value[2] ? '#52c41a' : '#ff4d4f'), shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.5)' },
+      symbolSize: (value: any[]) => (value?.[5] ? 13 : 8),
+      label: { formatter: '{b}', position: 'right', show: true, color: (p: any) => (p.value?.[5] ? activeProxyColor : '#8899aa'), fontSize: 12 },
+      itemStyle: {
+        color: (p: any) => (p.value?.[5] ? activeProxyColor : p.value?.[2] ? '#52c41a' : '#ff4d4f'),
+        shadowBlur: (p: any) => (p.value?.[5] ? 14 : 6),
+        shadowColor: (p: any) => (p.value?.[5] ? activeProxyColor : 'rgba(0,0,0,0.5)'),
+      },
     },
   ]
 
@@ -99,8 +126,8 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
   if (showPcLine) {
     series.push({
       id: 'pc-line', type: 'lines', coordinateSystem: 'geo', polyline: false,
-      data: [{ coords: [[props.myLocation!.lng, props.myLocation!.lat], hz], lineStyle: { color: '#13c2c2', width: 1.5, type: 'dashed' } }],
-      effect: { show: true, period: 4, trailLength: 0.2, symbol: 'circle', symbolSize: 4, color: '#13c2c2' },
+      data: [{ coords: [[props.myLocation!.lng, props.myLocation!.lat], hz], lineStyle: { color: localRegionColor, width: 1.5, type: 'dashed' } }],
+      effect: { show: true, period: 4, trailLength: 0.2, symbol: 'circle', symbolSize: 4, color: localRegionColor },
     })
   }
 
@@ -108,12 +135,24 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
     series.push({
       id: 'overseas-lines', type: 'lines', coordinateSystem: 'geo', polyline: false,
       animationDelay: 800,
-      data: groups.filter(g => g.reachable).map(g => ({
+      data: groups.filter(g => g.reachable && !g.selected).map(g => ({
         name: g.country,
         coords: [hz, g.location], lineStyle: { color: '#52c41a33', width: 1 },
       })),
-      effect: { show: true, period: 6, trailLength: 0.3, symbol: 'arrow', symbolSize: 6, color: '#1677ff' },
+      effect: { show: true, period: 6, trailLength: 0.3, symbol: 'arrow', symbolSize: 6, color: serverRegionColor },
     })
+    if (currentGroup) {
+      series.push({
+        id: 'current-proxy-line', type: 'lines', coordinateSystem: 'geo', polyline: false,
+        zlevel: 2,
+        data: [{
+          name: currentGroup.displayName,
+          coords: [hz, currentGroup.location],
+          lineStyle: { color: activeProxyColor, width: 2.2, opacity: currentGroup.reachable ? 0.9 : 0.55 },
+        }],
+        effect: { show: true, period: 3.6, trailLength: 0.28, symbol: 'arrow', symbolSize: 8, color: activeProxyColor },
+      })
+    }
   }
 
   return {

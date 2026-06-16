@@ -8,7 +8,9 @@ interface UpdateAPI {
   onAvailable: (cb: (info: UpdateInfo) => void) => void
   onProgress: (cb: (p: UpdateProgress) => void) => void
   onDownloaded: (cb: (info: UpdateInfo) => void) => void
+  onNone: (cb: () => void) => void
   onError: (cb: (msg: string) => void) => void
+  check: () => Promise<boolean>
   download: () => void
 }
 

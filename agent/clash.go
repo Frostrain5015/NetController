@@ -178,16 +178,20 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 
 	var nodes []proxyNodeInfo
 	for _, info := range seed {
-		if !leafTypes[info.Type] {
+		if !leafTypes[info.Type] && !isAutoSelectProxy(info.Name, info.Type) {
 			continue
 		}
 		lat, lng, country, ok := geolocateProxyNode(info.Name)
-		if !ok {
+		if !ok && leafTypes[info.Type] {
 			continue
 		}
 		info.Country = country
-		info.Location = []float64{lng, lat}
-		if dn, ok2 := countryNames[country]; ok2 {
+		if ok {
+			info.Location = []float64{lng, lat}
+		}
+		if isAutoSelectProxy(info.Name, info.Type) {
+			info.DisplayName = "自动选择"
+		} else if dn, ok2 := countryNames[country]; ok2 {
 			info.DisplayName = dn
 		} else {
 			info.DisplayName = info.Name
@@ -196,6 +200,7 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 	}
 	usage := fetchProviderSubscriptionUsage(apiPort)
 	usage.fillMissing(textUsage)
+	usage.inferTotalFromRemaining()
 	return nodes, usage
 }
 
@@ -207,6 +212,18 @@ func preferGroup(current string, next string) bool {
 		return true
 	}
 	return false
+}
+
+func isAutoSelectProxy(name string, proxyType string) bool {
+	if !groupTypes[strings.ToLower(proxyType)] {
+		return false
+	}
+	lower := strings.ToLower(name)
+	return strings.Contains(name, "自动选择") ||
+		strings.Contains(name, "自動選擇") ||
+		strings.Contains(lower, "auto select") ||
+		strings.Contains(lower, "auto-select") ||
+		strings.Contains(lower, "url-test")
 }
 
 func fetchClashConnectionCount(apiPort int) int {
@@ -322,6 +339,7 @@ func probeSingleDelay(apiPort int, name string, testURL string, timeoutSec int) 
 // --- Traffic & expiry parsing ---
 
 var trafficRe = regexp.MustCompile(`(?i)(?:剩余流量|流量剩余|traffic\s*left|remaining)[：:\s]*([\d.]+)\s*(TB|GB|MB)`)
+var totalTrafficRe = regexp.MustCompile(`(?i)(?:总流量|流量上限|套餐流量|traffic\s*total|total)[：:\s]*([\d.]+)\s*(TB|GB|MB)`)
 var expiryRe = regexp.MustCompile(`(?i)(?:套餐到期|到期时间|expire|expires)[：:\s]*(\d{4}[-/]\d{1,2}[-/]\d{1,2})`)
 
 func (u *subscriptionUsage) fillMissing(other subscriptionUsage) {
@@ -343,6 +361,9 @@ func (u *subscriptionUsage) mergeText(text string) {
 	if u.RemainingGB == nil {
 		u.RemainingGB = parseTrafficRemaining(text)
 	}
+	if u.TotalGB == nil {
+		u.TotalGB = parseTrafficTotal(text)
+	}
 	if u.Expiry == "" {
 		u.Expiry = parseExpiry(text)
 	}
@@ -350,6 +371,15 @@ func (u *subscriptionUsage) mergeText(text string) {
 
 func parseTrafficRemaining(name string) *float64 {
 	m := trafficRe.FindStringSubmatch(name)
+	if len(m) >= 3 {
+		v, _ := strconv.ParseFloat(m[1], 64)
+		return floatPtr(toGB(v, m[2]))
+	}
+	return nil
+}
+
+func parseTrafficTotal(name string) *float64 {
+	m := totalTrafficRe.FindStringSubmatch(name)
 	if len(m) >= 3 {
 		v, _ := strconv.ParseFloat(m[1], 64)
 		return floatPtr(toGB(v, m[2]))
@@ -422,6 +452,26 @@ func (u *subscriptionUsage) mergeSubscriptionInfo(info map[string]interface{}) {
 	}
 	if hasExpire && expire > 0 {
 		u.Expiry = time.Unix(int64(expire), 0).Format("2006-01-02")
+	}
+}
+
+func (u *subscriptionUsage) inferTotalFromRemaining() {
+	if u.TotalGB != nil || u.RemainingGB == nil {
+		return
+	}
+	remaining := *u.RemainingGB
+	commonCaps := []float64{50, 100, 150, 200, 300, 500, 1000, 2000, 5000}
+	for _, capGB := range commonCaps {
+		if remaining > capGB {
+			continue
+		}
+		if capGB-remaining <= math.Max(1, capGB*0.02) {
+			u.TotalGB = floatPtr(capGB)
+			if u.UsedGB == nil {
+				u.UsedGB = floatPtr(math.Max(0, capGB-remaining))
+			}
+			return
+		}
 	}
 }
 
