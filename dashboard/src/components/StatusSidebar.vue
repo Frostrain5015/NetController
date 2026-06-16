@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CheckCircleFilled, CloseCircleFilled, GlobalOutlined, ApiOutlined, ClusterOutlined } from '@ant-design/icons-vue'
+import { Boxes, Waypoints, Globe } from 'lucide-vue-next'
 import FlagIcon from './FlagIcon.vue'
 
 const props = defineProps<{ snapshot: Snapshot | null }>()
@@ -10,127 +10,204 @@ const proxy = computed(() => props.snapshot?.proxy ?? null)
 const proxyNodes = computed(() => props.snapshot?.proxyNodes ?? [])
 const locatedNodes = computed(() => proxyNodes.value.filter(n => n.location !== null))
 const unlocatedNodes = computed(() => proxyNodes.value.filter(n => n.location === null))
+const rootProjects = computed(() => projects.value.filter(p => !p.parent))
 
-function isChild(p: ProjectStatus) { return !!(p as any).parent }
-function childOf(parent: string) { return projects.value.filter(p => (p as any).parent === parent) }
+function childOf(parent: string) { return projects.value.filter(p => p.parent === parent) }
+
+const trafficPct = computed(() => {
+  const g = proxy.value?.trafficRemainingGB
+  if (g == null) return 0
+  return Math.min((g / 200) * 100, 100)
+})
+const trafficTone = computed(() => {
+  const g = proxy.value?.trafficRemainingGB ?? 0
+  return g > 40 ? 'ok' : g > 10 ? 'warn' : 'bad'
+})
 </script>
 
 <template>
-  <!-- 项目状态 -->
-  <div class="section">
-    <div class="section-header"><ClusterOutlined /><span>项目状态</span></div>
-    <div v-if="projects.length === 0" class="empty-text">暂无项目</div>
-    <template v-for="p in projects" :key="p.name">
-      <template v-if="!isChild(p)">
-        <div class="status-row">
-          <CheckCircleFilled v-if="p.alive" style="color: #52c41a; flex-shrink: 0" />
-          <CloseCircleFilled v-else style="color: #ff4d4f; flex-shrink: 0" />
-          <span class="status-name">{{ p.name }}</span>
-          <a-tag v-if="p.alive && p.port" color="blue" size="small">:{{ p.port }}</a-tag>
-          <a-tag v-if="p.alive" color="green" size="small">PID {{ p.pid }}</a-tag>
-          <a-tag v-else color="red" size="small">未运行</a-tag>
-        </div>
-        <!-- 子进程 -->
-        <div v-for="child in childOf(p.name)" :key="child.name" class="status-row child-row">
-          <CheckCircleFilled v-if="child.alive" style="color: #52c41a; flex-shrink: 0; font-size: 10px" />
-          <CloseCircleFilled v-else style="color: #ff4d4f; flex-shrink: 0; font-size: 10px" />
-          <span class="status-name">{{ child.name }}</span>
-          <a-tag v-if="child.alive && child.port" color="blue" size="small">:{{ child.port }}</a-tag>
-          <a-tag v-if="child.alive" color="green" size="small">PID {{ child.pid }}</a-tag>
-          <a-tag v-else color="red" size="small">未运行</a-tag>
-        </div>
-      </template>
+  <!-- ── 项目状态 ── -->
+  <div class="section nc-rise" style="animation-delay: 80ms">
+    <div class="section-head">
+      <Boxes :size="14" />
+      <span class="eyebrow">项目状态</span>
+      <span class="count">{{ rootProjects.length }}</span>
+    </div>
+    <div v-if="projects.length === 0" class="empty">暂无项目</div>
+    <template v-for="p in rootProjects" :key="p.name">
+      <div class="row">
+        <span class="stat-dot" :class="p.alive ? 'ok' : 'bad'"></span>
+        <span class="row-name">{{ p.name }}</span>
+        <span class="spacer"></span>
+        <span v-if="p.alive && p.port" class="chip accent">:{{ p.port }}</span>
+        <span v-if="p.alive" class="chip muted">PID {{ p.pid }}</span>
+        <span v-else class="chip bad">DOWN</span>
+      </div>
+      <div v-for="child in childOf(p.name)" :key="child.name" class="row child">
+        <span class="stat-dot sm" :class="child.alive ? 'ok' : 'bad'"></span>
+        <span class="row-name">{{ child.name }}</span>
+        <span class="spacer"></span>
+        <span v-if="child.alive && child.port" class="chip accent">:{{ child.port }}</span>
+        <span v-if="child.alive" class="chip muted">PID {{ child.pid }}</span>
+        <span v-else class="chip bad">DOWN</span>
+      </div>
     </template>
   </div>
 
-  <!-- 代理 (Clash) -->
-  <div class="section">
-    <div class="section-header"><ApiOutlined /><span>Clash 代理</span></div>
-    <div v-if="proxy" class="status-row">
-      <CheckCircleFilled v-if="proxy.alive" style="color: #52c41a; flex-shrink: 0" />
-      <CloseCircleFilled v-else style="color: #ff4d4f; flex-shrink: 0" />
-      <span class="status-name">{{ proxy.name || 'Clash' }}</span>
-      <a-tag v-if="proxy.port" color="blue" size="small">:{{ proxy.port }}</a-tag>
-      <a-tag v-if="proxy.alive" color="green" size="small">运行中</a-tag>
-      <a-tag v-else color="red" size="small">已停止</a-tag>
-      <a-tag v-if="proxy.alive && proxy.apiAccessible" color="blue" size="small">API 可达</a-tag>
-      <a-tag v-else-if="proxy.alive" color="orange" size="small">API 不可达</a-tag>
+  <!-- ── Clash 代理 ── -->
+  <div class="section nc-rise" style="animation-delay: 140ms">
+    <div class="section-head">
+      <Waypoints :size="14" />
+      <span class="eyebrow">Clash 代理</span>
     </div>
-    <div v-else class="empty-text">未配置</div>
-    <!-- 流量进度条 -->
-    <div v-if="proxy?.trafficRemainingGB != null" class="traffic-bar">
-      <div class="traffic-label">
+    <div v-if="proxy" class="row">
+      <span class="stat-dot" :class="proxy.alive ? 'ok' : 'bad'"></span>
+      <span class="row-name">{{ proxy.name || 'Clash' }}</span>
+      <span class="spacer"></span>
+      <span v-if="proxy.port" class="chip accent">:{{ proxy.port }}</span>
+      <span v-if="proxy.alive && proxy.apiAccessible" class="chip ok">API</span>
+      <span v-else-if="proxy.alive" class="chip warn">NO API</span>
+      <span v-else class="chip bad">DOWN</span>
+    </div>
+    <div v-else class="empty">未配置</div>
+
+    <!-- 流量 -->
+    <div v-if="proxy?.trafficRemainingGB != null" class="meter">
+      <div class="meter-head">
         <span>剩余流量</span>
-        <span>{{ proxy.trafficRemainingGB.toFixed(1) }} / 200 GB</span>
+        <span class="mono">{{ proxy.trafficRemainingGB.toFixed(1) }} / 200 GB</span>
       </div>
-      <a-progress
-        :percent="Math.min((proxy.trafficRemainingGB / 200) * 100, 100)"
-        :stroke-color="proxy.trafficRemainingGB > 40 ? '#52c41a' : proxy.trafficRemainingGB > 10 ? '#faad14' : '#ff4d4f'"
-        :show-info="false"
-        size="small"
-      />
+      <div class="meter-track">
+        <div class="meter-fill" :class="trafficTone" :style="{ width: trafficPct + '%' }"></div>
+      </div>
     </div>
     <!-- 套餐到期 -->
-    <div v-if="proxy?.planExpiry" class="expiry-row">
+    <div v-if="proxy?.planExpiry" class="kv">
       <span>套餐到期</span>
-      <span class="expiry-date">{{ proxy.planExpiry }}</span>
+      <span class="mono kv-val">{{ proxy.planExpiry }}</span>
     </div>
   </div>
 
-  <!-- 代理节点 -->
-  <div class="section">
-    <div class="section-header"><GlobalOutlined /><span>代理节点</span></div>
-    <div v-if="proxyNodes.length === 0" class="empty-text">
+  <!-- ── 代理节点 ── -->
+  <div class="section nc-rise" style="animation-delay: 200ms">
+    <div class="section-head">
+      <Globe :size="14" />
+      <span class="eyebrow">代理节点</span>
+      <span v-if="proxyNodes.length" class="count">{{ proxyNodes.length }}</span>
+    </div>
+    <div v-if="proxyNodes.length === 0" class="empty">
       {{ proxy && proxy.alive ? '未获取到代理节点（Clash API 未响应）' : '代理未运行' }}
     </div>
-    <template v-for="n in locatedNodes" :key="n.name">
-      <div class="status-row">
-        <span class="node-dot" :class="n.reachable ? 'reachable' : 'unreachable'"></span>
-        <FlagIcon :code="n.country" />
-        <span class="status-name">{{ n.displayName || n.name }}</span>
-        <a-tag v-if="n.reachable" color="green" size="small">{{ n.latencyMs }}ms</a-tag>
-        <a-tag v-else-if="(n as any).tested" color="red" size="small">超时</a-tag>
-        <a-tag v-else color="default" size="small">检测中</a-tag>
-      </div>
-    </template>
-    <div v-if="unlocatedNodes.length > 0" class="sub-header">未定位节点</div>
-    <div v-for="n in unlocatedNodes" :key="n.name" class="status-row">
-      <span class="node-dot" :class="n.reachable ? 'reachable' : 'unreachable'"></span>
-      <a-tag color="purple" size="small">{{ n.type }}</a-tag>
-      <span class="status-name">{{ n.displayName || n.name }}</span>
-      <a-tag v-if="n.reachable" color="green" size="small">{{ n.latencyMs }}ms</a-tag>
-      <a-tag v-else-if="(n as any).tested" color="red" size="small">超时</a-tag>
-      <a-tag v-else color="default" size="small">检测中</a-tag>
+
+    <div v-for="n in locatedNodes" :key="n.name" class="row">
+      <span class="node-dot" :class="n.reachable ? 'on' : 'off'"></span>
+      <FlagIcon :code="n.country" />
+      <span class="row-name">{{ n.displayName || n.name }}</span>
+      <span class="spacer"></span>
+      <span v-if="n.reachable" class="chip ok mono">{{ n.latencyMs }}ms</span>
+      <span v-else-if="(n as any).tested" class="chip bad">超时</span>
+      <span v-else class="chip muted">检测中</span>
+    </div>
+
+    <div v-if="unlocatedNodes.length > 0" class="sub-head">未定位节点</div>
+    <div v-for="n in unlocatedNodes" :key="n.name" class="row">
+      <span class="node-dot" :class="n.reachable ? 'on' : 'off'"></span>
+      <span class="chip ghost">{{ n.type }}</span>
+      <span class="row-name">{{ n.displayName || n.name }}</span>
+      <span class="spacer"></span>
+      <span v-if="n.reachable" class="chip ok mono">{{ n.latencyMs }}ms</span>
+      <span v-else-if="(n as any).tested" class="chip bad">超时</span>
+      <span v-else class="chip muted">检测中</span>
     </div>
   </div>
 </template>
 
 <style scoped>
-.section { margin-bottom: 20px; }
-.section-header {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 13px; font-weight: 600; color: #8899aa;
-  margin-bottom: 10px; letter-spacing: 0.5px;
-}
-.status-row {
+.section { margin-bottom: 24px; }
+.section-head {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; margin-bottom: 4px;
-  background: #141f2b; border-radius: 6px;
-  border: 1px solid #1f2d3d; font-size: 13px;
+  margin-bottom: 12px;
+  color: var(--accent);
 }
-.child-row {
-  margin-left: 18px; background: #111c26;
+.section-head .eyebrow { flex: 1; }
+.count {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: var(--text-dim);
+  padding: 1px 7px; border-radius: 100px;
+  background: rgba(120, 168, 210, 0.08); border: 1px solid var(--line);
 }
-.status-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.empty-text { color: #556677; font-size: 12px; padding: 4px 0; }
-.sub-header { font-size: 11px; color: #556677; padding: 8px 0 4px 0; border-top: 1px solid #1f2d3d; margin-top: 4px; }
-.traffic-bar { padding: 6px 10px; background: #141f2b; border-radius: 6px; border: 1px solid #1f2d3d; margin-bottom: 4px; }
-.traffic-label { display: flex; justify-content: space-between; font-size: 11px; color: #8899aa; margin-bottom: 4px; }
-.expiry-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #141f2b; border-radius: 6px; border: 1px solid #1f2d3d; margin-bottom: 4px; font-size: 12px; color: #8899aa; }
-.expiry-date { color: #e0e0e0; }
-.node-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+
+.row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 11px; margin-bottom: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition: border-color 0.18s, background 0.18s;
 }
-.node-dot.reachable { background: #52c41a; box-shadow: 0 0 6px #52c41a66; }
-.node-dot.unreachable { background: #ff4d4f; box-shadow: 0 0 6px #ff4d4f66; }
+.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.row.child { margin-left: 16px; background: var(--bg-deep); }
+.row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.spacer { flex: 1; }
+
+/* Status dots */
+.stat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.stat-dot.sm { width: 6px; height: 6px; }
+.stat-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(61, 220, 151, 0.7); }
+.stat-dot.bad { background: var(--bad); box-shadow: 0 0 8px rgba(255, 93, 108, 0.6); }
+.node-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.node-dot.on { background: var(--ok); box-shadow: 0 0 7px rgba(61, 220, 151, 0.7); }
+.node-dot.off { background: var(--text-faint); }
+
+/* Chips */
+.chip {
+  flex-shrink: 0;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.4px;
+  padding: 2px 7px; border-radius: 5px;
+  border: 1px solid transparent; line-height: 1.5;
+}
+.chip.mono { font-family: var(--mono); font-weight: 500; letter-spacing: 0; }
+.chip.accent { color: var(--accent); background: var(--accent-dim); border-color: rgba(54, 211, 238, 0.22); }
+.chip.ok { color: var(--ok); background: rgba(61, 220, 151, 0.12); border-color: rgba(61, 220, 151, 0.25); }
+.chip.warn { color: var(--warn); background: rgba(245, 185, 66, 0.12); border-color: rgba(245, 185, 66, 0.25); }
+.chip.bad { color: var(--bad); background: rgba(255, 93, 108, 0.12); border-color: rgba(255, 93, 108, 0.25); }
+.chip.muted { color: var(--text-dim); background: rgba(120, 168, 210, 0.06); border-color: var(--line); }
+.chip.ghost { color: var(--text-dim); background: transparent; border-color: var(--line-strong); }
+
+/* Empty / sub */
+.empty { color: var(--text-faint); font-size: 12px; padding: 2px 2px 4px; }
+.sub-head {
+  font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-faint); padding: 10px 2px 6px;
+  border-top: 1px solid var(--line); margin-top: 6px;
+}
+
+/* Traffic meter */
+.meter {
+  padding: 10px 11px; margin-top: 5px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.meter-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: var(--text-dim); margin-bottom: 8px;
+}
+.meter-head .mono { font-family: var(--mono); color: var(--text); }
+.meter-track { height: 5px; border-radius: 100px; background: rgba(120, 168, 210, 0.10); overflow: hidden; }
+.meter-fill {
+  height: 100%; border-radius: 100px;
+  transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.meter-fill.ok { background: linear-gradient(90deg, #2bbf87, var(--ok)); box-shadow: 0 0 10px rgba(61, 220, 151, 0.5); }
+.meter-fill.warn { background: linear-gradient(90deg, #d99a2a, var(--warn)); box-shadow: 0 0 10px rgba(245, 185, 66, 0.5); }
+.meter-fill.bad { background: linear-gradient(90deg, #e0455a, var(--bad)); box-shadow: 0 0 10px rgba(255, 93, 108, 0.5); }
+
+/* Key-value */
+.kv {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 11px; margin-top: 5px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--text-dim);
+}
+.kv-val { font-family: var(--mono); color: var(--text); }
 </style>

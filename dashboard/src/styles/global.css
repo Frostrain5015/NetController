@@ -1,0 +1,86 @@
+/* ============================================================
+   NetController — Command Center design system
+   ============================================================ */
+
+:root {
+  /* Surfaces */
+  --bg-base: #06090e;
+  --bg-deep: #04070b;
+  --panel: #0b111a;
+  --panel-2: #0e1622;
+  --panel-hover: #111c2a;
+
+  /* Lines */
+  --line: rgba(120, 168, 210, 0.10);
+  --line-strong: rgba(120, 168, 210, 0.20);
+
+  /* Accent + status */
+  --accent: #36d3ee;
+  --accent-dim: rgba(54, 211, 238, 0.14);
+  --accent-glow: rgba(54, 211, 238, 0.45);
+  --ok: #3ddc97;
+  --warn: #f5b942;
+  --bad: #ff5d6c;
+
+  /* Text */
+  --text: #d6e2ee;
+  --text-dim: #74899e;
+  --text-faint: #44586b;
+
+  --mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  --ui: 'Chakra Petch', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --radius: 10px;
+  --radius-sm: 7px;
+}
+
+body { font-family: var(--ui); }
+
+/* Atmospheric background: radial glow + faint HUD grid */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 600px at 78% -8%, rgba(54, 211, 238, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, rgba(61, 220, 151, 0.05), transparent 55%),
+    var(--bg-base);
+}
+.app-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(120, 168, 210, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 168, 210, 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 30%, transparent 95%);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(120, 168, 210, 0.35); }
+
+/* Shared eyebrow / section label */
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Staggered entrance */
+@keyframes nc-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.nc-rise { animation: nc-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes nc-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}

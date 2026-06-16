@@ -8,7 +8,7 @@ export function useAgentData() {
 
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  let wsUrl = 'ws://116.62.179.231:9527/ws'
+  let wsUrl = 'wss://frostrain.tech/nc/ws'
 
   function connect() {
     if (ws) { try { ws.close() } catch { /* */ } }

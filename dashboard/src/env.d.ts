@@ -1,11 +1,25 @@
 /// <reference types="vite/client" />
 
+interface UpdateInfo { version: string }
+interface UpdateProgress {
+  percent: number; transferred: number; total: number; bytesPerSecond: number
+}
+interface UpdateAPI {
+  onAvailable: (cb: (info: UpdateInfo) => void) => void
+  onProgress: (cb: (p: UpdateProgress) => void) => void
+  onDownloaded: (cb: (info: UpdateInfo) => void) => void
+  onError: (cb: (msg: string) => void) => void
+  download: () => void
+}
+
 interface ElectronAPI {
   getConfig: () => Promise<{ wsUrl: string }>
   saveConfig: (config: { wsUrl: string }) => Promise<boolean>
   minimize: () => void
   maximize: () => void
   close: () => void
+  reportConnection: (state: string) => void
+  update: UpdateAPI
 }
 
 interface Window { electronAPI?: ElectronAPI }

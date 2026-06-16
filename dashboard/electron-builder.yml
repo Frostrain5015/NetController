@@ -2,20 +2,36 @@ appId: com.netcontroller.dashboard
 productName: NetController
 directories:
   output: release
+  buildResources: build
 
 files:
   - dist
   - dist-electron
   - node_modules
 
+icon: build/icon.ico
+
 win:
+  icon: build/icon.ico
   target:
-    - target: portable
+    - target: nsis
       arch: [x64]
   sign: null
   signAndEditExecutable: false
 
-portable:
-  artifactName: NetController.exe
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  shortcutName: NetController
+  artifactName: NetController-Setup-${version}.exe
+
+publish:
+  provider: github
+  owner: Frostrain5015
+  repo: NetController
 
 asar: true
