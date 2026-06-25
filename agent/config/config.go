@@ -13,10 +13,11 @@ type Project struct {
 }
 
 type Proxy struct {
-	ProcessName  string `yaml:"processName"`
-	Port         int    `yaml:"port"`
-	ClashApiPort int    `yaml:"clashApiPort"`
-	TestURL      string `yaml:"testUrl"`
+	ProcessName     string `yaml:"processName"`
+	Port            int    `yaml:"port"`
+	ClashApiPort    int    `yaml:"clashApiPort"`
+	TestURL         string `yaml:"testUrl"`
+	SubscriptionURL string `yaml:"subscriptionUrl"`
 }
 
 type Config struct {

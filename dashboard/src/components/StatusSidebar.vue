@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Boxes, Waypoints, Globe } from 'lucide-vue-next'
 import FlagIcon from './FlagIcon.vue'
 
 const props = defineProps<{ snapshot: Snapshot | null }>()
 const emit = defineEmits<{ selectProxyNode: [node: ProxyNode] }>()
+
+const switchingTo = ref<string | null>(null)
+const switchError = ref<string | null>(null)
+let errorTimer: ReturnType<typeof setTimeout> | null = null
 
 const deprecatedProjectNames = new Set(['Webhook'])
 const projects = computed(() => (props.snapshot?.projects ?? []).filter(p => !deprecatedProjectNames.has(p.name)))
@@ -47,9 +51,24 @@ const trafficLabel = computed(() => {
   return total ? `${g.toFixed(1)} / ${total.toFixed(1)} GB` : `${g.toFixed(1)} GB`
 })
 
-function selectProxyNode(node: ProxyNode) {
+async function selectProxyNode(node: ProxyNode) {
+  if (switchingTo.value) return // 防止重复点击
+  switchingTo.value = node.name
+  switchError.value = null
+  if (errorTimer) { clearTimeout(errorTimer); errorTimer = null }
   emit('selectProxyNode', node)
 }
+
+// App.vue 调用此方法通知切换结果
+function onSwitchDone(ok: boolean, message?: string) {
+  switchingTo.value = null
+  if (!ok && message) {
+    switchError.value = message
+    errorTimer = setTimeout(() => { switchError.value = null }, 3000)
+  }
+}
+
+defineExpose({ onSwitchDone })
 </script>
 
 <template>
@@ -130,7 +149,7 @@ function selectProxyNode(node: ProxyNode) {
       v-for="n in strategyNodes"
       :key="n.name"
       class="row node-row strategy-row"
-      :class="{ selected: n.selected }"
+      :class="{ selected: n.selected, switching: switchingTo === n.name }"
       :title="`切换到 ${n.displayName || n.name}`"
       @click="selectProxyNode(n)"
     >
@@ -138,7 +157,8 @@ function selectProxyNode(node: ProxyNode) {
       <span class="chip accent">AUTO</span>
       <span class="row-name">{{ n.displayName || n.name }}</span>
       <span class="spacer"></span>
-      <span v-if="n.selected" class="chip ok">ACTIVE</span>
+      <span v-if="switchingTo === n.name" class="chip warn">切换中…</span>
+      <span v-else-if="n.selected" class="chip ok">ACTIVE</span>
       <span v-else class="chip muted">策略</span>
     </div>
 
@@ -146,7 +166,7 @@ function selectProxyNode(node: ProxyNode) {
       v-for="n in locatedNodes"
       :key="n.name"
       class="row node-row"
-      :class="{ selected: n.selected }"
+      :class="{ selected: n.selected, switching: switchingTo === n.name }"
       :title="`切换到 ${n.displayName || n.name}`"
       @click="selectProxyNode(n)"
     >
@@ -154,7 +174,8 @@ function selectProxyNode(node: ProxyNode) {
       <FlagIcon :code="n.country" />
       <span class="row-name">{{ n.displayName || n.name }}</span>
       <span class="spacer"></span>
-      <span v-if="n.selected" class="chip ok">ACTIVE</span>
+      <span v-if="switchingTo === n.name" class="chip warn">切换中…</span>
+      <span v-else-if="n.selected" class="chip ok">ACTIVE</span>
       <span v-if="n.reachable" class="chip ok mono">{{ n.latencyMs }}ms</span>
       <span v-else-if="(n as any).tested" class="chip bad">超时</span>
       <span v-else class="chip muted">检测中</span>
@@ -165,7 +186,7 @@ function selectProxyNode(node: ProxyNode) {
       v-for="n in unlocatedNodes"
       :key="n.name"
       class="row node-row"
-      :class="{ selected: n.selected }"
+      :class="{ selected: n.selected, switching: switchingTo === n.name }"
       :title="`切换到 ${n.displayName || n.name}`"
       @click="selectProxyNode(n)"
     >
@@ -173,11 +194,15 @@ function selectProxyNode(node: ProxyNode) {
       <span class="chip ghost">{{ n.type }}</span>
       <span class="row-name">{{ n.displayName || n.name }}</span>
       <span class="spacer"></span>
-      <span v-if="n.selected" class="chip ok">ACTIVE</span>
+      <span v-if="switchingTo === n.name" class="chip warn">切换中…</span>
+      <span v-else-if="n.selected" class="chip ok">ACTIVE</span>
       <span v-if="n.reachable" class="chip ok mono">{{ n.latencyMs }}ms</span>
       <span v-else-if="(n as any).tested" class="chip bad">超时</span>
       <span v-else class="chip muted">检测中</span>
     </div>
+
+    <!-- 切换失败提示 -->
+    <div v-if="switchError" class="switch-error">{{ switchError }}</div>
   </div>
 </template>
 
@@ -209,6 +234,15 @@ function selectProxyNode(node: ProxyNode) {
 .row.child { margin-left: 16px; background: var(--bg-deep); }
 .row.node-row { cursor: pointer; }
 .row.node-row.selected { border-color: rgba(61, 220, 151, 0.45); background: rgba(61, 220, 151, 0.08); }
+.row.node-row.switching { opacity: 0.6; pointer-events: none; border-color: rgba(245, 185, 66, 0.5); }
+.switch-error {
+  margin-top: 6px; padding: 8px 11px;
+  font-size: 11px; color: var(--bad);
+  background: rgba(255, 93, 108, 0.08); border: 1px solid rgba(255, 93, 108, 0.25);
+  border-radius: var(--radius-sm);
+  animation: fadeIn 0.2s;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .spacer { flex: 1; }
 

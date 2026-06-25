@@ -1,0 +1,13 @@
+listen: ":9527"
+
+projects:
+  - name: "My App"
+    processName: "my-app"
+    port: 8080
+
+proxy:
+  processName: "mihomo"
+  port: 7897
+  clashApiPort: 9090
+  testUrl: "https://www.baidu.com"
+  # subscriptionUrl: "https://your-provider-url"

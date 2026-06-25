@@ -157,7 +157,7 @@ func collectAndBroadcast(hub *ws.Hub, cfg *config.Config) {
 	}
 
 	if pxAlive {
-		nodes, usage := fetchClashProxies(apiPort)
+		nodes, usage := fetchClashProxies(apiPort, cfg.Proxy.SubscriptionURL)
 		updateProxyCache(nodes, usage)
 		snap.Proxy.ActiveConnections = fetchClashConnectionCount(apiPort)
 		snap.Proxy.TrafficRemainingGB = cachedTrafficRemainingGB
@@ -194,7 +194,7 @@ func collectAndBroadcastSys(hub *ws.Hub, cfg *config.Config) {
 		PortOpen: collector.CheckPort(cfg.Proxy.Port),
 	}
 	if pxAlive {
-		nodes, usage := fetchClashProxies(apiPort)
+		nodes, usage := fetchClashProxies(apiPort, cfg.Proxy.SubscriptionURL)
 		updateProxyCache(nodes, usage)
 		snap.Proxy.ActiveConnections = fetchClashConnectionCount(apiPort)
 		snap.Proxy.ApiAccessible = len(cachedNodes) > 0

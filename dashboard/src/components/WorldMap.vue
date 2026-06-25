@@ -17,9 +17,24 @@ let animTimer: ReturnType<typeof setTimeout> | null = null
 const serverLocation: [number, number] = [120.15, 30.28]
 const serverRegionColor = '#1677ff'
 const localRegionColor = '#13c2c2'
-const activeProxyColor = '#ffb454'
-const nodeReachableColor = '#6b8cae'
-const nodeUnreachableColor = '#8a4a5a'
+const activeProxyColor = '#b37feb'
+const nodeReachableColor = '#52c41a'
+const nodeSlowColor = '#faad14'
+const nodeUnreachableColor = '#ff4d4f'
+
+// 本机 IP 所在地区：青色半透明斜线纹理（叠加在可达性底色之上）
+function localHatchPattern(): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = c.height = 10
+  const ctx = c.getContext('2d')!
+  ctx.strokeStyle = 'rgba(19,194,194,0.38)'
+  ctx.lineWidth = 1.5
+  ctx.beginPath(); ctx.moveTo(-1, 11); ctx.lineTo(11, -1); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(-1, 21); ctx.lineTo(21, -1); ctx.stroke()
+  return c
+}
+let _hatchCanvas: HTMLCanvasElement | null = null
+function getLocalPattern() { return _hatchCanvas ??= localHatchPattern() }
 
 type CountryGroup = {
   displayName: string
@@ -118,11 +133,25 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
   const regions: any[] = [
     { name: 'China', itemStyle: { areaColor: '#1a3050', borderColor: serverRegionColor, borderWidth: 1 } },
   ]
-  if (myCountry && myCountry !== 'China') {
-    regions.push({ name: myCountry, itemStyle: { areaColor: '#162d40', borderColor: localRegionColor, borderWidth: 1 } })
-  }
-  if (activeRegionName) {
-    regions.push({ name: activeRegionName, itemStyle: { areaColor: '#3a2b19', borderColor: activeProxyColor, borderWidth: 1.4 } })
+  // 海外节点所在国家/地区：底色 = 可达性，本机 IP 地区叠加青色斜线，选中国家纯紫色覆盖
+  for (const g of groups) {
+    const rn = worldRegionName(g.country)
+    if (!rn || rn === 'China') continue
+    const isLocal = myCountry && myCountry !== 'China' && rn === worldRegionName(myCountry)
+    const isActive = rn === activeRegionName
+    // 底色：可达性
+    const baseArea = g.reachable ? '#142814' : '#2d1519'
+    const baseBorder = g.reachable ? nodeReachableColor : nodeUnreachableColor
+    if (isActive && !isLocal) {
+      // 选中节点地区（非本机）：纯紫色覆盖
+      regions.push({ name: rn, itemStyle: { areaColor: '#2a1a3a', borderColor: activeProxyColor, borderWidth: 1.4 } })
+    } else if (isLocal) {
+      // 本机 IP 所在地区：底色 + 青色斜线纹理（即使同时也是选中节点地区，本机优先）
+      regions.push({ name: rn, itemStyle: { areaColor: { image: getLocalPattern(), repeat: 'repeat' }, borderColor: localRegionColor, borderWidth: 1.4 } })
+    } else {
+      // 普通地区：可达性颜色
+      regions.push({ name: rn, itemStyle: { areaColor: baseArea, borderColor: baseBorder, borderWidth: 1 } })
+    }
   }
 
   const series: any[] = [
@@ -140,9 +169,17 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
       symbolSize: (value: any[]) => (value?.[5] ? 13 : 8),
       label: { formatter: '{b}', position: 'right', show: true, color: (p: any) => (p.data?.value?.[5] ? activeProxyColor : '#8899aa'), fontSize: 12 },
       itemStyle: {
-        color: (p: any) => (p.value?.[5] ? activeProxyColor : p.value?.[2] ? nodeReachableColor : nodeUnreachableColor),
-        shadowBlur: (p: any) => (p.value?.[5] ? 14 : 6),
-        shadowColor: (p: any) => (p.value?.[5] ? activeProxyColor : 'rgba(0,0,0,0.5)'),
+        color: (p: any) => {
+          if (p.value?.[5]) return activeProxyColor
+          if (!p.value?.[2]) return nodeUnreachableColor
+          return p.value?.[3] > 300 ? nodeSlowColor : nodeReachableColor
+        },
+        shadowBlur: (p: any) => (p.value?.[5] ? 14 : 4),
+        shadowColor: (p: any) => {
+          if (p.value?.[5]) return activeProxyColor
+          if (!p.value?.[2]) return nodeUnreachableColor
+          return p.value?.[3] > 300 ? nodeSlowColor : nodeReachableColor
+        },
       },
     },
   ]
@@ -203,7 +240,8 @@ function buildOption(showOverseas: boolean): echarts.EChartsOption {
           const [lng, lat, reachable, ms] = p.value ?? []
           const g = groups.find(g => g.displayName === p.name)
           const ns = g ? ` (${g.count} 个节点)` : ''
-          return `<b>${p.name}</b>${ns}<br/>${reachable ? `可达 ${ms < 9999 ? ms + 'ms' : ''}` : '不可达'}`
+          const status = !reachable ? '<span style="color:#ff4d4f">不可达</span>' : ms > 300 ? `<span style="color:#faad14">慢 ${ms}ms</span>` : `<span style="color:#52c41a">可达 ${ms}ms</span>`
+          return `<b>${p.name}</b>${ns}<br/>${status}`
         }
         return `${p.name}`
       },

@@ -114,9 +114,12 @@ function quitNow() {
   if (tray) { try { tray.destroy() } catch { /* */ }; tray = null }
   if (mainWindow) {
     try { mainWindow.removeAllListeners('close') } catch { /* */ }
-    try { mainWindow.close() } catch { /* */ }
+    try { mainWindow.destroy() } catch { /* */ }
+    mainWindow = null
   }
   app.quit()
+  // 兜底：如果 app.quit() 未能在 2s 内退出，强制杀进程
+  setTimeout(() => { try { process.exit(0) } catch { /* */ } }, 2000)
 }
 
 function createWindow() {
@@ -216,6 +219,11 @@ if (!gotLock) {
   app.on('activate', showMainWindow)
   app.on('before-quit', () => {
     quitting = true
-    try { mainWindow?.removeAllListeners('close') } catch { /* */ }
+    if (tray) { try { tray.destroy() } catch { /* */ }; tray = null }
+    if (mainWindow) {
+      try { mainWindow.removeAllListeners('close') } catch { /* */ }
+      try { mainWindow.destroy() } catch { /* */ }
+      mainWindow = null
+    }
   })
 }

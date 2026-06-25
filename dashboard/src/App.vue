@@ -11,6 +11,7 @@ import SettingsModal from './components/SettingsModal.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
 
 const { snapshot, connected, selectProxyNode } = useAgentData()
+const sidebarRef = ref<InstanceType<typeof StatusSidebar> | null>(null)
 
 // 把连接状态同步给主进程，驱动托盘图标/提示
 watch(connected, (s) => window.electronAPI?.reportConnection(s), { immediate: true })
@@ -30,6 +31,11 @@ const connMeta = computed(() => {
     default: return { label: 'OFFLINE', cls: 'bad' }
   }
 })
+
+async function onSelectProxyNode(node: ProxyNode) {
+  const result = await selectProxyNode(node)
+  sidebarRef.value?.onSwitchDone(result.ok, result.message)
+}
 
 function winMinimize() { window.electronAPI?.minimize() }
 function winMaximize() { window.electronAPI?.maximize() }
@@ -62,7 +68,7 @@ function winClose() { window.electronAPI?.close() }
       <aside class="app-sider">
         <div class="sider-scroll">
           <ServerMetrics :metrics="snapshot?.serverMetrics ?? null" />
-          <StatusSidebar :snapshot="snapshot" @select-proxy-node="selectProxyNode" />
+          <StatusSidebar ref="sidebarRef" :snapshot="snapshot" @select-proxy-node="onSelectProxyNode" />
         </div>
       </aside>
 

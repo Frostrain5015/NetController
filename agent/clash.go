@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,7 +137,7 @@ type subscriptionUsage struct {
 
 // --- Clash API client ---
 
-func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
+func fetchClashProxies(apiPort int, subscriptionURL string) ([]proxyNodeInfo, subscriptionUsage) {
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/proxies", apiPort))
 	if err != nil {
 		return nil, subscriptionUsage{}
@@ -152,6 +153,7 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 	seed := make(map[string]*proxyNodeInfo)
 	textUsage := subscriptionUsage{}
 
+	// 第一遍：收集所有 proxy 节点和组信息（不设置 Selected）
 	for key, obj := range data.Proxies {
 		t := strings.ToLower(obj.Type)
 		if groupTypes[t] {
@@ -159,14 +161,9 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 				if info, exists := seed[name]; !exists {
 					seed[name] = &proxyNodeInfo{Name: name, Group: key, GroupType: t, Selected: false}
 				} else {
-					isPreferred := preferGroup(info.Group, info.GroupType, key, t)
-					if isPreferred {
+					if preferGroup(info.Group, info.GroupType, key, t) {
 						info.Group = key
 						info.GroupType = t
-					}
-					// 只在首选的 selector 组中判断 Selected
-					if obj.Now == name && isPreferred {
-						info.Selected = true
 					}
 				}
 				textUsage.mergeText(name)
@@ -178,6 +175,21 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 			info.Type = t
 		}
 		textUsage.mergeText(key)
+	}
+
+	// 第二遍：只从主 selector 组设置 Selected（确保全局唯一 active）
+	primaryNow := findPrimarySelectorNow(data.Proxies)
+	if primaryNow != "" {
+		// 先标记主 selector 的直接目标
+		if info, ok := seed[primaryNow]; ok {
+			info.Selected = true
+		}
+		// 如果目标是策略节点（如"自动选择"），追踪其实际选中的叶子节点
+		if obj, ok := data.Proxies[primaryNow]; ok && groupTypes[strings.ToLower(obj.Type)] && obj.Now != "" {
+			if info, ok := seed[obj.Now]; ok {
+				info.Selected = true
+			}
+		}
 	}
 
 	var nodes []proxyNodeInfo
@@ -208,7 +220,45 @@ func fetchClashProxies(apiPort int) ([]proxyNodeInfo, subscriptionUsage) {
 	usage := fetchProviderSubscriptionUsage(apiPort)
 	usage.fillMissing(textUsage)
 	usage.inferTotalFromRemaining()
+	// 优先使用订阅 URL 的实时数据（覆盖旧值）
+	if subUsage := fetchSubscriptionUsage(subscriptionURL); subUsage.RemainingGB != nil || subUsage.TotalGB != nil || subUsage.Expiry != "" {
+		if subUsage.RemainingGB != nil {
+			usage.RemainingGB = subUsage.RemainingGB
+		}
+		if subUsage.TotalGB != nil {
+			usage.TotalGB = subUsage.TotalGB
+		}
+		if subUsage.Expiry != "" {
+			usage.Expiry = subUsage.Expiry
+		}
+		if subUsage.UsedGB != nil {
+			usage.UsedGB = subUsage.UsedGB
+		}
+		// 重新推算总量
+		usage.inferTotalFromRemaining()
+	}
 	return nodes, usage
+}
+
+// findPrimarySelectorNow 找到主 selector 组（节点选择/Proxy/Select）的 Now 值
+func findPrimarySelectorNow(proxies map[string]clashProxy) string {
+	bestName := ""
+	bestRank := 999
+	for key, obj := range proxies {
+		t := strings.ToLower(obj.Type)
+		if t != "selector" {
+			continue
+		}
+		rank := selectorGroupRank(key)
+		if rank < bestRank {
+			bestRank = rank
+			bestName = key
+		}
+	}
+	if bestName == "" {
+		return ""
+	}
+	return proxies[bestName].Now
 }
 
 func preferGroup(currentGroup string, currentType string, nextGroup string, nextType string) bool {
@@ -459,6 +509,16 @@ func fetchProviderSubscriptionUsage(apiPort int) subscriptionUsage {
 			}
 			usage.mergeSubscriptionInfo(info)
 		}
+		// 遍历 provider 内部 proxy 节点名，解析流量/到期信息
+		if proxiesRaw, ok := provider["proxies"].([]interface{}); ok {
+			for _, rawProxy := range proxiesRaw {
+				p, ok := rawProxy.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				usage.mergeText(stringValue(p, "name"))
+			}
+		}
 	}
 	return usage
 }
@@ -567,4 +627,66 @@ func toGB(v float64, unit string) float64 {
 	default:
 		return v
 	}
+}
+
+// fetchSubscriptionUsage 从订阅 URL 获取实时流量数据（解析 SS URL fragment）
+func fetchSubscriptionUsage(subscriptionURL string) subscriptionUsage {
+	if subscriptionURL == "" {
+		return subscriptionUsage{}
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(subscriptionURL)
+	if err != nil {
+		log.Printf("subscription fetch err: %v", err)
+		return subscriptionUsage{}
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return subscriptionUsage{}
+	}
+
+	// 响应是 base64 编码的 SS URL 列表，每行一个
+	decoded, err := base64Decode(string(body))
+	if err != nil {
+		log.Printf("subscription base64 decode err: %v", err)
+		return subscriptionUsage{}
+	}
+
+	usage := subscriptionUsage{}
+	for _, line := range strings.Split(decoded, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// 解码 URL fragment（#后面的部分）
+		if idx := strings.LastIndex(line, "#"); idx >= 0 {
+			fragment := line[idx+1:]
+			decodedFrag, err := url.QueryUnescape(fragment)
+			if err != nil {
+				continue
+			}
+			usage.mergeText(decodedFrag)
+		}
+	}
+	return usage
+}
+
+func base64Decode(s string) (string, error) {
+	// 尝试标准 base64
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err == nil {
+		return string(b), nil
+	}
+	// 尝试 raw URL base64
+	b, err = base64.RawURLEncoding.DecodeString(s)
+	if err == nil {
+		return string(b), nil
+	}
+	// 尝试补全 padding
+	b, err = base64.URLEncoding.DecodeString(s)
+	if err == nil {
+		return string(b), nil
+	}
+	return "", err
 }

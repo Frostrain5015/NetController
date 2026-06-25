@@ -2,6 +2,8 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 export type ConnStatus = 'connecting' | 'connected' | 'disconnected'
 
+export interface SelectResult { ok: boolean; message?: string }
+
 export function useAgentData() {
   const snapshot = ref<Snapshot | null>(null)
   const connected = ref<ConnStatus>('disconnected')
@@ -10,14 +12,31 @@ export function useAgentData() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let wsUrl = 'wss://frostrain.tech/nc/ws'
 
-  function selectProxyNode(node: ProxyNode) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false
-    ws.send(JSON.stringify({
-      type: 'proxy-select',
-      name: node.name,
-      group: node.group,
-    }))
-    return true
+  // 等待服务器 proxy-select-result 的 Promise 回调
+  let selectResolver: ((result: SelectResult) => void) | null = null
+
+  function selectProxyNode(node: ProxyNode): Promise<SelectResult> {
+    return new Promise<SelectResult>((resolve) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        resolve({ ok: false, message: '未连接' })
+        return
+      }
+      // 超时 10s
+      const timer = setTimeout(() => {
+        selectResolver = null
+        resolve({ ok: false, message: '超时' })
+      }, 10000)
+      selectResolver = (result) => {
+        clearTimeout(timer)
+        selectResolver = null
+        resolve(result)
+      }
+      ws.send(JSON.stringify({
+        type: 'proxy-select',
+        name: node.name,
+        group: node.group,
+      }))
+    })
   }
 
   function connect() {
@@ -41,6 +60,10 @@ export function useAgentData() {
             ;(node as any).tested = true
           }
         } else if (data.type === 'proxy-select-result') {
+          // 先通知等待中的 selectProxyNode Promise
+          if (selectResolver) {
+            selectResolver({ ok: !!data.ok, message: data.message })
+          }
           if (!snapshot.value || !data.ok) return
           for (const node of snapshot.value.proxyNodes) {
             node.selected = node.name === data.name
@@ -49,14 +72,12 @@ export function useAgentData() {
           const prevNodes = snapshot.value?.proxyNodes ?? []
           snapshot.value = data as Snapshot
           if (data.proxyNodes && data.proxyNodes.length > 0) {
-            // 快照来自 ping 完成后——所有节点均已探测，标记 tested
             for (const n of snapshot.value.proxyNodes) {
               ;(n as any).tested = true
             }
           } else if (prevNodes.length > 0) {
-            // 系统快照不含 proxyNodes ——保留已有节点状态
             for (const n of prevNodes) {
-              ;(n as any).tested = true // ping 结果可能比快照先到
+              ;(n as any).tested = true
             }
             snapshot.value.proxyNodes = prevNodes
           }
@@ -67,6 +88,8 @@ export function useAgentData() {
     ws.onclose = () => {
       connected.value = 'disconnected'
       ws = null
+      // 拒绝正在进行的选择请求
+      if (selectResolver) { selectResolver({ ok: false, message: '连接断开' }); selectResolver = null }
       reconnectTimer = setTimeout(connect, 5000)
     }
 

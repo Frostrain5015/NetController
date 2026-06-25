@@ -6,6 +6,7 @@
 *.key
 *.env
 .env.*
+agent/agent.yaml
 
 # Python 桥接层敏感文件
 bridge/*password*
